@@ -12,3 +12,6 @@ wheels/
 *gz
 *lock
 *.Identifier 
+*tsv
+*txt
+*secrets*
