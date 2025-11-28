@@ -29,11 +29,13 @@ except Exception:
         sys.path.insert(0, ROOT)
     from preprocess.sanitizers import sanitize_line
 
+
 def calc_file_id(path: str) -> str:
     st = os.stat(path)
     key = f"{path}|{int(st.st_mtime)}|{st.st_size}".encode("utf-8")
     import hashlib as _hl
     return _hl.sha256(key).hexdigest()[:32]
+
 
 def _derive_normal_path(path: str, override: str = None) -> str:
     if override:
@@ -47,11 +49,13 @@ def _derive_normal_path(path: str, override: str = None) -> str:
         base = path
     return base + ".normal.txt"
 
+
 def _derive_uniq_paths(normal_path: str) -> tuple:
     base, _ = os.path.splitext(normal_path)
     uniq_txt = base + "_uniq.txt"
     uniq_tsv = base + "_uniq_with_count.tsv"
     return uniq_txt, uniq_tsv
+
 
 def write_normal_file(path: str, out_path: str, chunk_lines: int = 10000) -> int:
     """
@@ -70,6 +74,7 @@ def write_normal_file(path: str, out_path: str, chunk_lines: int = 10000) -> int
                 out.write(line + "\n")
                 total += 1
     return total
+
 
 def build_uniq_files(normal_path: str, chunk_lines: int = 10000) -> tuple:
     """
@@ -104,11 +109,13 @@ def build_uniq_files(normal_path: str, chunk_lines: int = 10000) -> tuple:
     uniq_distinct = len(uniq_list)
     return uniq_txt, uniq_tsv, uniq_count, uniq_distinct
 
+
 class _KeyTextObj:
     """轻量包装, 仅提供 key_text 属性, 以复用 matcher.match_batch"""
     __slots__ = ("key_text",)
     def __init__(self, key_text: str):
         self.key_text = key_text
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -135,7 +142,10 @@ def main():
     match_workers = args.match_workers or fp.get("match_workers_per_batch", 4)
     size_threshold = args.size_threshold or bufcfg.get("size_threshold", 100)
     max_per_mb = args.max_per_micro_batch or bufcfg.get("max_per_micro_batch", 15)
-    committee_backend = cmcfg.get("model", "stub")
+
+    # 关键修正: 从 agents.yaml 的 committee.backend 读取后端, 避免默认成 "stub"
+    # 仍然把该值传入 committee.run 的 model 形参以保持兼容
+    committee_backend = cmcfg.get("backend", cmcfg.get("model", "langgraph"))
     agents_cfg_path = cmcfg.get("config_path", "configs/agents.yaml")
     phase = cmcfg.get("phase", "v1点0")
 
@@ -167,8 +177,7 @@ def main():
 
     # 3) 生成 uniq 文件
     uniq_txt, uniq_tsv, uniq_total, uniq_distinct = build_uniq_files(normal_path, chunk_lines=chunk_lines)
-    print(f"[P1] 产物: uniq={uniq_txt} uniq_with_count={uniq_tsv} "
-          f"normal_lines={pre_lines} uniq_total={uniq_total} uniq_distinct={uniq_distinct}")
+    print(f"[P1] 产物: uniq={uniq_txt} uniq_with_count={uniq_tsv} normal_lines={pre_lines} uniq_total={uniq_total} uniq_distinct={uniq_distinct}")
 
     # 4) 装载活动索引与缓冲器
     idx = indexer_mod.Indexer()
@@ -201,10 +210,14 @@ def main():
 
             def _async_proc():
                 try:
+                    # 与现有 committee.run 兼容: model 参数传入 backend 值; 真实分支由 YAML 配置决定
                     cands = committee.run(samples, model=committee_backend, phase=phase, config_path=agents_cfg_path)
                     if cands:
                         templates.write_candidates(cands)
                         idx.build_new_index_async()
+                except Exception as e:
+                    # 异常不阻断主流程
+                    print(f"[P1][LLM] 异步处理异常: {e}")
                 finally:
                     dbuf.clear_locked_batch()
 
@@ -222,6 +235,8 @@ def main():
                     if cands:
                         templates.write_candidates(cands)
                         idx.build_new_index_async()
+                except Exception as e:
+                    print(f"[P1][LLM] 异步处理异常: {e}")
                 finally:
                     dbuf.clear_locked_batch()
             th2 = threading.Thread(target=_async_proc2, daemon=True)
@@ -234,6 +249,7 @@ def main():
 
     dao.complete_run_session(run_id, total_lines=len(parsed_all), preprocessed_lines=pre_lines, unmatched_lines=0, status="成功")
     print(f"[OK] 第一遍完成 file_id={file_id}, normal={normal_path}")
+
 
 if __name__ == "__main__":
     main()

@@ -6,13 +6,14 @@ committee:
     min_support: 2
     regression_files_lookback: 10
     adversary_unmatched_limit: 200
+    print_transcript: false  # 新增 默认不打印, 可在命令行 --print-committee 开启
   agents:
     clusterer:
       backend: "langchain"
       model:
         provider: "openai"
-        api_key_ref: "secrets.qwen.api_key"   # 从 secrets.yaml 读取
-        base_url_ref: "secrets.qwen.base_url" # 可选 若不填则用 base_url 字段
+        api_key_ref: "secrets.qwen.api_key"
+        base_url_ref: "secrets.qwen.base_url"
         model_name: "qwen-max-latest"
         temperature: 0.0
         timeout_s: 600

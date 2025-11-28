@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run p1_run_first_pass",
+      "type": "python",
+      "request": "launch",
+      "module": "bin.p1_run_first_pass",
+      "args": [
+        "--path", "test.gz",
+        "--size-threshold", "15",
+        "--micro-batch", "20",
+        "--max-per-micro-batch", "30",
+        "--await-llm",
+        "--force-flush"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true
+    }
+  ]
+}
