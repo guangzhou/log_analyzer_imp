@@ -1,5 +1,0 @@
-pyyaml>=6.0.2
-pydantic>=2.8.0
-langchain>=0.3.0
-langgraph>=0.2.26
-langchain-openai>=0.2.0
