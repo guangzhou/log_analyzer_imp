@@ -1,0 +1,16 @@
+indexer:
+  double_buffer:
+    enabled: true
+buffer:
+  size_threshold: 100
+  min_trigger_interval_sec: 300
+  new_ratio_trigger: 0.2
+committee:
+  phase: "v1点0"
+  score_threshold: 0.75
+p2:
+  agg:
+    batch_lines: 1000
+time_point:
+  enabled: false
+  ttl_days: 3

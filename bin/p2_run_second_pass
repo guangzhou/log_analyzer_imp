@@ -1,0 +1,40 @@
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import argparse
+from core.ingestion import open_gz_stream, compute_file_id
+from core.preprocess import preprocess_to_normal
+from core.parser import parse_line
+from core.indexer import load_active_index, match_templates
+from core.aggregator import Aggregator
+from store import dao
+def main(path: str, file_id_arg: str | None = None):
+    dao.init_db()
+    file_id = compute_file_id(path) if file_id_arg in (None, "", "auto") else file_id_arg
+    dao.upsert_file_registry(file_id=file_id, path=path, sha256="", size_bytes=0, gz_mtime="", status="已处理")
+    run_id = dao.new_run_session(file_id, "第二遍", {"note":"p2"})
+    meta = preprocess_to_normal(open_gz_stream(path), file_id)
+    idx = load_active_index()
+    agg = Aggregator(run_id)
+    matched_lines = 0; unmatched_lines = 0
+    with open(meta["normal_path"], "r", encoding="utf-8") as f:
+        for line in f:
+            lf = parse_line(line.rstrip("\n"))
+            items = [{"key_text": lf.key_text, "signature":"", "sample_count":1}]
+            m, u = match_templates(items, idx)
+            if m:
+                info = m[0]; template_id = info["template_id"]
+                agg.update(file_id=file_id, template_id=template_id, mod=lf.mod, smod=lf.smod, classification="", level=lf.level, thread_id=lf.thread_id, ts=lf.ts or "")
+                matched_lines += 1
+            else:
+                dao.insert_unmatched(run_id, file_id, lf.key_text, line.rstrip("\n"), buffered=False, buffer_id=None, reason="p2未命中")
+                unmatched_lines += 1
+    agg.flush()
+    dao.finish_run_session(run_id, {
+        "total_lines": meta["total_lines"],
+        "preprocessed_lines": meta["preprocessed_lines"],
+        "matched_lines": matched_lines,
+        "unmatched_lines": unmatched_lines
+    }, status="成功")
+if __name__ == "__main__":
+    ap=argparse.ArgumentParser(); ap.add_argument("--path", required=True); ap.add_argument("--file-id", default="auto"); args=ap.parse_args(); main(args.path, args.file_id)

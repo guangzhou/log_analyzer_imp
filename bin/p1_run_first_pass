@@ -1,0 +1,47 @@
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import argparse
+from core.ingestion import open_gz_stream, compute_file_id
+from core.preprocess import preprocess_to_normal
+from core.parser import extract_mod_smod_from_file
+from core.keyextract import iter_key_texts
+from core.dedup import normalize_and_sign_items
+from core.indexer import load_active_index, build_index_incremental, atomic_switch_index
+from core.matcher import run_match
+from core.buffer import buffer_unmatched, should_trigger_committee, lock_buffer_group, clear_buffer_group
+from core.committee import run_committee_phased
+from core.templatemgr import merge_templates_and_version
+from core.configs import COMMITTEE_CFG
+from store import dao
+
+def main(path: str):
+    dao.init_db()
+    file_id = compute_file_id(path)
+    dao.upsert_file_registry(file_id=file_id, path=path, sha256="", size_bytes=0, gz_mtime="", status="新")
+    run_id = dao.new_run_session(file_id, "第一遍", {"phase": COMMITTEE_CFG.get("phase","v1点0")})
+    meta = preprocess_to_normal(open_gz_stream(path), file_id)
+    mods, pairs = extract_mod_smod_from_file(meta["normal_path"])
+    dao.bulk_upsert_modules(mods); dao.bulk_upsert_submodules(pairs)
+    idx = load_active_index()
+    items = normalize_and_sign_items(iter_key_texts(meta["normal_path"]))
+    matched, unmatched = run_match(items, idx)
+    buffer_id = None
+    if unmatched:
+        buffer_id = buffer_unmatched(unmatched, run_id)
+        if buffer_id and should_trigger_committee(buffer_id):
+            samples = lock_buffer_group(buffer_id)
+            phase = COMMITTEE_CFG.get("phase","v1点0")
+            cands = run_committee_phased(samples, phase=phase, trace_id=f"{file_id}-{run_id}")
+            new_ids = merge_templates_and_version(cands)
+            if new_ids:
+                nh = build_index_incremental(new_ids); atomic_switch_index(nh)
+            clear_buffer_group(buffer_id)
+    dao.finish_run_session(run_id, {
+        "total_lines": meta["total_lines"],
+        "preprocessed_lines": meta["preprocessed_lines"],
+        "matched_lines": len(matched),
+        "unmatched_lines": len(unmatched)
+    }, status="成功")
+if __name__ == "__main__":
+    ap=argparse.ArgumentParser(); ap.add_argument("--path", required=True); args=ap.parse_args(); main(args.path)

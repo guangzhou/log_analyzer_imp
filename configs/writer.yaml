@@ -1,0 +1,4 @@
+summary:
+  batch_size: 500
+bucket:
+  batch_size: 1000

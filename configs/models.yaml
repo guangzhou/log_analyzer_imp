@@ -1,0 +1,8 @@
+default_model: "openai:gpt-4o-mini"
+timeout_sec: 60
+retry:
+  max_attempts: 3
+  backoff_sec: 2
+routing:
+  rules_generate: "openai:gpt-4o-mini"
+  desc_generate: "openai:gpt-4o-mini"
