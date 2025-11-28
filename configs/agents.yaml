@@ -1,0 +1,70 @@
+committee:
+  backend: "langgraph"
+  phase: "v1点5"
+  orchestration:
+    max_templates: 10
+    min_support: 2
+    regression_files_lookback: 10
+    adversary_unmatched_limit: 200
+  agents:
+    clusterer:
+      backend: "langchain"
+      model:
+        provider: "openai"
+        api_key_ref: "secrets.qwen.api_key"   # 从 secrets.yaml 读取
+        base_url_ref: "secrets.qwen.base_url" # 可选 若不填则用 base_url 字段
+        model_name: "qwen-max-latest"
+        temperature: 0.0
+        timeout_s: 600
+        auth_scheme: "Bearer"
+    drafter:
+      backend: "langchain"
+      model:
+        provider: "openai"
+        api_key_ref: "secrets.qwen.api_key"
+        base_url_ref: "secrets.qwen.base_url"
+        model_name: "qwen-max-latest"
+        temperature: 0.0
+        timeout_s: 600
+        auth_scheme: "Bearer"
+    generalizer:
+      backend: "langchain"
+      model:
+        provider: "openai"
+        api_key_ref: "secrets.qwen.api_key"
+        base_url_ref: "secrets.qwen.base_url"
+        model_name: "qwen-max-latest"
+        temperature: 0.2
+        timeout_s: 600
+        auth_scheme: "Bearer"
+    adversary:
+      backend: "langchain"
+      model:
+        provider: "openai"
+        api_key_ref: "secrets.qwen.api_key"
+        base_url_ref: "secrets.qwen.base_url"
+        model_name: "qwen-max-latest"
+        temperature: 0.0
+        timeout_s: 600
+        auth_scheme: "Bearer"
+      historical_source: "dao"
+    regressor:
+      backend: "langchain"
+      model:
+        provider: "openai"
+        api_key_ref: "secrets.qwen.api_key"
+        base_url_ref: "secrets.qwen.base_url"
+        model_name: "qwen-max-latest"
+        temperature: 0.0
+        timeout_s: 600
+        auth_scheme: "Bearer"
+    arbiter:
+      backend: "langchain"
+      model:
+        provider: "openai"
+        api_key_ref: "secrets.qwen.api_key"
+        base_url_ref: "secrets.qwen.base_url"
+        model_name: "qwen-max-latest"
+        temperature: 0.0
+        timeout_s: 600
+        auth_scheme: "Bearer"

@@ -1,0 +1,1 @@
+rm -rf *.Identifier */*Identifier */*/*Identifier

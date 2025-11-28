@@ -5,8 +5,15 @@
 
 ## 快速开始
 ```bash
-python -m store.dao --init
+python -m store.dao --init --db ./data/log_analyzer.sqlite3
 python bin/p0_bootstrap_seed_templates --paths sample_logs/example1.gz
+python -m bin.p1_run_first_pass \
+  --path test.gz \
+  --size-threshold 15 \
+  --micro-batch 100 \
+  --max-per-micro-batch 100 \
+  --await-llm \
+  --force-flush
 python bin/p1_run_first_pass --path sample_logs/example1.gz
 python bin/p2_run_second_pass --path sample_logs/example1.gz --file-id auto
 # 可选：审批台

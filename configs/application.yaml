@@ -1,16 +1,13 @@
-indexer:
-  double_buffer:
-    enabled: true
-buffer:
-  size_threshold: 100
-  min_trigger_interval_sec: 300
-  new_ratio_trigger: 0.2
-committee:
-  phase: "v1点0"
-  score_threshold: 0.75
-p2:
-  agg:
-    batch_lines: 1000
-time_point:
-  enabled: false
-  ttl_days: 3
+first_pass:
+  buffer:
+    max_window: 1000
+    micro_batch: 200
+    diversity:
+      jaccard_threshold: 0.7
+  matcher:
+    indexer:
+      strategy: "double_buffer"
+  committee:
+    backend: "langgraph"
+    config_path: "configs/agents.yaml"
+    secrets_path: "configs/secrets.yaml"   # 新增：指定密钥文件路径

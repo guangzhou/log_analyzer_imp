@@ -1,4 +1,0 @@
-[20250614_190558][23207.008][E][10339][MOD:local_mapper][SMOD:log][ ERROR ] [ FusionMap ] laneloc is invalid ...[Process, 938, /home/dji/aep/catkin_ws/src/vins/ipa_locator/src/algorithm/lane_loc_kernel/fusion_map/fusion_map.cpp]
-garbage continued part
-[20250614_190558][23207.403][E][10343][MOD:local_mapper][SMOD:log][ ERROR ] [ FusionMap ] invalid by too close to real merge cross ...[Process, 951, /home/dji/aep/catkin_ws/src/vins/ipa_locator/src/algorithm/lane_loc_kernel/fusion_map/fusion_map.cpp]
-[20250614_190601][23210.295][E][4641][MOD:gateway-][SMOD:main][E][2025-06-14 19:06:01.475][DCos::AdvertiseService] failed: dcos advertise-service server. topic = /sys/gateway/upload_mode/v1
