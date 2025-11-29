@@ -1,19 +1,25 @@
+# 智能体与编排配置
 committee:
-  backend: "langgraph"
+  backend: "langgraph"        # 可选: langgraph 或 langchain 或 stub
   phase: "v1点5"
   orchestration:
     max_templates: 10
     min_support: 2
     regression_files_lookback: 10
     adversary_unmatched_limit: 200
-    print_transcript: false  # 新增 默认不打印, 可在命令行 --print-committee 开启
+    # 新增: 对话追踪与限流
+    trace_conversations: true         # 打开后会在 data/agent_traces 记录每次 LLM 的提示与输出
+    trace_dir: "data/agent_traces"
+    max_chars_per_call: 32000          # 传给 LLM 的字符上限
+    max_items_per_call: 120            # 单次参与聚类/草拟的最大样本数
+
   agents:
     clusterer:
       backend: "langchain"
       model:
         provider: "openai"
-        api_key_ref: "secrets.qwen.api_key"
-        base_url_ref: "secrets.qwen.base_url"
+        api_key_ref: "secrets.qwen.api_key"   # 从 secrets.yaml 读取
+        base_url_ref: "secrets.qwen.base_url" # 可选 若不填则用 base_url 字段
         model_name: "qwen-max-latest"
         temperature: 0.0
         timeout_s: 600

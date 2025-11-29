@@ -7,8 +7,8 @@
    - xx_uniq.txt 与 xx_uniq_with_count.tsv: 关键文本排序去重与计数
 2) 匹配与缓冲基于 xx_uniq.txt 进行, 减少重复匹配
 3) 阈值触发 LLM 改为【同步】执行, 新模板写库后立即用同步索引重建使之生效
-   - 新增: 使用 Indexer.build_new_index_sync 同步原子切换活动索引
-4) --await-llm 参数保留但无实际作用, 为兼容旧脚本调用
+   - 使用 Indexer.build_new_index_sync 同步原子切换活动索引
+4) 新增: 将 run_id 与 file_id 通过 run_context 传入委员会, 便于按需记录“会话内容”
 """
 import os, argparse, sys
 from typing import List
@@ -109,7 +109,6 @@ def main():
     ap.add_argument("--micro-batch", type=int, default=None, help="微批大小")
     ap.add_argument("--match-workers", type=int, default=None, help="每批匹配并发 worker 数")
     ap.add_argument("--config", type=str, default="configs/application.yaml", help="应用配置")
-    ap.add_argument("--await-llm", action="store_true", help="兼容旧参数 无实际作用")
     ap.add_argument("--force-flush", action="store_true", help="结束时强制冲洗缓冲区并同步调用 LLM")
     args = ap.parse_args()
 
@@ -125,7 +124,7 @@ def main():
     size_threshold = args.size_threshold or bufcfg.get("size_threshold", 100)
     max_per_mb = args.max_per_micro_batch or bufcfg.get("max_per_micro_batch", 15)
 
-    # 关键修正: 从 agents.yaml 的 committee.backend 读取后端, 传入 committee.run 的 model 形参以保持兼容
+    # 从 agents.yaml 的 committee.backend 读取后端, 传入 committee.run 的 model 形参以保持兼容
     committee_backend = cmcfg.get("backend", cmcfg.get("model", "langgraph"))
     agents_cfg_path = cmcfg.get("config_path", "configs/agents.yaml")
     phase = cmcfg.get("phase", "v1点0")
@@ -177,7 +176,9 @@ def main():
         """同步触发智能体委员会, 写模板并同步原子切换索引。"""
         if not samples:
             return
-        cands = committee.run(samples, model=committee_backend, phase=phase, config_path=agents_cfg_path)
+        # 将 run_id 与 file_id 传入, 供委员会在 trace_conversations 开启时记录“会话内容”
+        cands = committee.run(samples, model=committee_backend, phase=phase, config_path=agents_cfg_path,
+                              run_context={"file_id": file_id, "run_id": run_id})
         if cands:
             templates.write_candidates(cands)
             # 同步重建索引并切换, 让新规则立刻生效
@@ -202,11 +203,12 @@ def main():
                 dbuf.clear_locked_batch()
 
     # 结束时可选强制冲洗一次缓冲, 同步 LLM
-    if args.force_flush:
-        samples = dbuf.snapshot_and_lock()
-        try:
+    samples = dbuf.snapshot_and_lock() if args.force_flush else []
+    try:
+        if samples:
             _run_llm_sync(samples)
-        finally:
+    finally:
+        if samples:
             dbuf.clear_locked_batch()
 
     dao.complete_run_session(run_id, total_lines=len(parsed_all), preprocessed_lines=pre_lines, unmatched_lines=0, status="成功")

@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 from typing import List, Dict, Any, Optional
+import os, json, time, re
 
+from core.utils.config import load_yaml
+from store import dao
+
+# ------------------------------ 通用小工具 ------------------------------
 
 def _truncate_samples_for_llm(samples, max_chars: int = 32000, max_items: int = 120):
     """将样本做去重与长度裁剪，保证传给 LLM 的输入在安全范围。
@@ -22,26 +27,28 @@ def _truncate_samples_for_llm(samples, max_chars: int = 32000, max_items: int = 
         out.append(s); total += len(s) + 1
     return out
 
-import os
-from core.utils.config import load_yaml
-from store import dao
 
 def _ensure_list_str(xs) -> List[str]:
     return [x for x in xs if isinstance(x, str) and x.strip()]
 
+
 def _default_agents_cfg_path() -> str:
     return os.environ.get("LOG_ANALYZER_AGENTS_PATH", "configs/agents.yaml")
+
 
 def _default_secrets_path() -> str:
     # 可在 application.yaml 的 first_pass.committee.secrets_path 覆盖
     return os.environ.get("LOG_ANALYZER_SECRETS_PATH", "configs/secrets.yaml")
 
+
 def _mk_candidate(pattern: str, sample_log: str, semantic_info: str = "", advise: str = "", source: str = "委员会") -> Dict[str, Any]:
     return dict(pattern=pattern, sample_log=sample_log, semantic_info=semantic_info, advise=advise, source=source)
+
 
 def _read_application_yaml() -> Dict[str, Any]:
     app = load_yaml("configs/application.yaml") or {}
     return app
+
 
 def _load_secrets(app_cfg: Dict[str, Any]) -> Dict[str, Any]:
     # 优先 application.yaml 指定路径
@@ -53,6 +60,7 @@ def _load_secrets(app_cfg: Dict[str, Any]) -> Dict[str, Any]:
     except Exception:
         return {}
 
+
 def _dot_get(d: Dict[str, Any], path: str, default: Optional[Any] = None):
     cur = d or {}
     if not path:
@@ -63,6 +71,7 @@ def _dot_get(d: Dict[str, Any], path: str, default: Optional[Any] = None):
         else:
             return default
     return cur
+
 
 def _resolve_model_field(model_cfg: Dict[str, Any], field: str, secrets: Dict[str, Any], env_keys: List[str], default=None):
     """
@@ -88,6 +97,7 @@ def _resolve_model_field(model_cfg: Dict[str, Any], field: str, secrets: Dict[st
             return v
     # 4) 默认
     return default
+
 
 def _build_langchain_llm(model_cfg: Dict[str, Any], secrets: Dict[str, Any]):
     # 支持私有云 OpenAI 兼容网关；读取顺序：agents.yaml -> secrets.yaml -> env -> 默认
@@ -140,182 +150,246 @@ def _build_langchain_llm(model_cfg: Dict[str, Any], secrets: Dict[str, Any]):
 
     raise RuntimeError(f"不支持的 provider: {prov}")
 
-def _lc_cluster(llm, samples: List[str]) -> List[List[str]]:
+
+# ------------------------------ 带“会话内容”记录的 LLM 代理 ------------------------------
+
+def _trace_prep(orchestration_cfg: Dict[str, Any], run_context: Optional[Dict[str, Any]]):
+    """根据配置决定是否开启对话记录，返回 (enabled, writer)。"""
+    orch = orchestration_cfg or {}
+    enabled = bool(orch.get("trace_conversations", False))
+    trace_dir = orch.get("trace_dir", "data/agent_traces")
+    if not enabled:
+        return False, (lambda *a, **k: None), None
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    file_id = (run_context or {}).get("file_id", "nofile")
+    run_id = (run_context or {}).get("run_id", "norun")
+    base = os.path.join(trace_dir, f"{ts}_{file_id}_{run_id}")
+    os.makedirs(base, exist_ok=True)
+    path = os.path.join(base, "trace.jsonl")
+
+    def _write(event: str, payload: Dict[str, Any]):
+        rec = {
+            "ts": time.time(),
+            "event": event,
+            "run_context": {"file_id": file_id, "run_id": run_id},
+            **payload
+        }
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    return True, _write, path
+
+
+def _lc_cluster(llm, samples: List[str], trace=None) -> List[List[str]]:
+    """聚类节点，可选记录 prompt 与输出"""
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.output_parsers import JsonOutputParser
     prompt = ChatPromptTemplate.from_messages([
         ("system", "你是日志聚类助手。将输入的关键日志样本按语义分成若干簇，每簇保留若干代表样本。仅返回 JSON 数组，每个元素是该簇的代表样本数组。"),
         ("user", "{samples}")
     ])
+    if trace:
+        # 记录格式化后的消息
+        msgs = prompt.format_messages(samples="\n".join(samples))
+        trace("cluster.prompt", {"messages": [dict(type=m.type, content=m.content) for m in msgs]})
     chain = prompt | llm | JsonOutputParser()
     clusters = chain.invoke({"samples": "\n".join(samples)})
-    return [ _ensure_list_str(c) for c in clusters if isinstance(c, list) ]
+    clusters = [ [x for x in c if isinstance(x, str) and x.strip()] for c in clusters if isinstance(c, list) ]
+    if trace:
+        trace("cluster.output", {"clusters": clusters})
+    return clusters
 
-def _lc_draft(llm, cluster_samples: List[str]) -> Dict[str, Any]:
+
+def _lc_draft(llm, cluster_samples: List[str], trace=None) -> List[Dict[str, Any]]:
+    """草拟正则：
+    - 输入一簇样本，期望输出“多个”候选规则
+    - 返回值是 JSON 数组，每个元素包含至少: pattern, sample_log, semantic_info；可选 advise、category
+    - 为避免 LangChain 变量占位符冲突，提示中的花括号作为字面量出现时使用双花括号转义
+    """
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.output_parsers import JsonOutputParser
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "根据样本生成一个尽量简洁且泛化的正则。以 JSON 返回：{{pattern, sample_log, semantic_info, advise}}。"),
-        ("user", "{samples}")
-    ])
-    chain = prompt | llm | JsonOutputParser()
-    out = chain.invoke({"samples": "\n".join(cluster_samples)})
-    return dict(
-        pattern=out.get("pattern",""),
-        sample_log=out.get("sample_log", cluster_samples[0] if cluster_samples else ""),
-        semantic_info=out.get("semantic_info",""),
-        advise=out.get("advise","")
+
+    system_text = (
+        "你是一个自动驾驶系统问题分析专家，对报错日志进行分类与规则抽取。"
+        "请分析多条样本日志，并输出 JSON 数组。数组中每个元素必须包含字段："
+        "pattern, sample_log, semantic_info；可选字段：advise, category。"
+        "要求：pattern 为尽量简洁且泛化的正则；sample_log 选用代表性样本；"
+        "semantic_info 用一句话概括问题；advise 仅对错误类可给出处理建议。"
+        "注意：只输出 JSON 数组本体，不要多余文字。"
+    )
+    # 使用双花括号展示示例（避免被当作模板变量）
+    example_text = (
+        "示例输入：\n"
+        "Auto gen vx graph(DAADBevDetTemporal6v) failed\n"
+        "Auto gen vx graph(DAADBevDetTemporal5v) failed\n"
+        "示例输出：\n"
+        '[{{"semantic_info":"VX 图生成失败","advise":"检查图生成流程中的参数配置与系统资源","pattern":"Auto gen vx graph(.*) failed.","sample_log":"Auto gen vx graph(DAADBevDetTemporal6v) failed."}}]'
     )
 
-def _lc_adversary(llm, pattern: str, historical_negatives: List[str]) -> bool:
-    import re
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_text + "\n" + example_text),
+        ("user", "{samples}")
+    ])
+
+    if trace:
+        msgs = prompt.format_messages(samples="\n".join(cluster_samples))
+        trace("draft.prompt", {"messages": [dict(type=m.type, content=m.content) for m in msgs]})
+
+    chain = prompt | llm | JsonOutputParser()
+    out = chain.invoke({"samples": "\n".join(cluster_samples)})
+
+    # 兼容：如果模型误返回 dict，转为 list
+    if isinstance(out, dict):
+        out = [out]
+    results = []
+    for item in out:
+        if not isinstance(item, dict):
+            continue
+        result = dict(
+            pattern=item.get("pattern",""),
+            sample_log=item.get("sample_log", cluster_samples[0] if cluster_samples else ""),
+            semantic_info=item.get("semantic_info",""),
+            advise=item.get("advise",""),
+        )
+        # category 可忽略入库，但将其原样保留在回显轨迹里
+        if "category" in item:
+            result["category"] = item.get("category")
+        results.append(result)
+
+    if trace:
+        trace("draft.output", {"results": results})
+    return results
+
+
+def _lc_adversary(pattern: str, historical_negatives: List[str], trace=None) -> bool:
     cre = re.compile(pattern) if pattern else None
     if not cre:
+        if trace: trace("adversary.compile_error", {"pattern": pattern})
         return False
     hits = sum(1 for s in historical_negatives if cre.search(s))
-    return hits == 0
+    ok = (hits == 0)
+    if trace:
+        trace("adversary.result", {"pattern": pattern, "neg_checked": len(historical_negatives), "hits": hits, "ok": ok})
+    return ok
 
-def _lc_regression(llm, pattern: str, history_matched: List[str]) -> bool:
-    import re
+
+def _lc_regression(pattern: str, history_matched: List[str], trace=None) -> bool:
     cre = re.compile(pattern) if pattern else None
     if not cre:
+        if trace: trace("regression.compile_error", {"pattern": pattern})
         return False
     if not history_matched:
+        if trace: trace("regression.result", {"pattern": pattern, "checked": 0, "ok": True})
         return True
     ok = sum(1 for s in history_matched if cre.search(s))
-    return ok >= max(1, int(len(history_matched) * 0.6))
+    passed = ok >= max(1, int(len(history_matched) * 0.6))
+    if trace:
+        trace("regression.result", {"pattern": pattern, "checked": len(history_matched), "ok_count": ok, "passed": passed})
+    return passed
 
-def _lc_arbitrate(llm, drafts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+
+def _lc_arbitrate(drafts: List[Dict[str, Any]], trace=None) -> List[Dict[str, Any]]:
+    if trace:
+        trace("arbiter.result", {"kept": drafts})
     return drafts
 
-def _run_langchain(samples: List[str], cfg: Dict[str, Any], secrets: Dict[str, Any]) -> List[Dict[str, Any]]:
+
+def _build_llms_for_agents(agents_cfg: Dict[str, Any], secrets: Dict[str, Any]):
+    # 每个智能体允许不同模型
+    return {
+        "clusterer": _build_langchain_llm(agents_cfg.get("clusterer", {}).get("model", {}), secrets),
+        "drafter": _build_langchain_llm(agents_cfg.get("drafter", {}).get("model", {}), secrets),
+        "adversary": _build_langchain_llm(agents_cfg.get("adversary", {}).get("model", {}), secrets),
+        "regressor": _build_langchain_llm(agents_cfg.get("regressor", {}).get("model", {}), secrets),
+        "arbiter": _build_langchain_llm(agents_cfg.get("arbiter", {}).get("model", {}), secrets),
+    }
+
+
+def _run_langchain(samples: List[str], cfg: Dict[str, Any], secrets: Dict[str, Any], run_context: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     samples = _ensure_list_str(samples)
     if not samples:
         return []
-    agents = cfg.get("agents", {})
     orch = cfg.get("orchestration", {})
-    max_templates = orch.get("max_templates", 10)
+    max_templates = orch.get("max_templates", 20)
+    max_chars = orch.get("max_chars_per_call", 32000)
+    max_items = orch.get("max_items_per_call", 120)
+    samples = _truncate_samples_for_llm(samples, max_chars=max_chars, max_items=max_items)
 
-    llm_clusterer = _build_langchain_llm(agents.get("clusterer", {}).get("model", {}), secrets)
-    llm_drafter = _build_langchain_llm(agents.get("drafter", {}).get("model", {}), secrets)
-    llm_adversary = _build_langchain_llm(agents.get("adversary", {}).get("model", {}), secrets)
-    llm_regressor = _build_langchain_llm(agents.get("regressor", {}).get("model", {}), secrets)
-    llm_arbiter = _build_langchain_llm(agents.get("arbiter", {}).get("model", {}), secrets)
+    trace_enabled, trace_write, trace_path = _trace_prep(orch, run_context)
+    if trace_enabled:
+        trace_write("init", {"samples_cnt": len(samples), "max_templates": max_templates})
 
-    clusters = _lc_cluster(llm_clusterer, samples)
-    drafts = []
+    agents = cfg.get("agents", {})
+    llms = _build_llms_for_agents(agents, secrets)
+
+    # 1) 聚类
+    clusters = _lc_cluster(llms["clusterer"], samples, trace=trace_write if trace_enabled else None)
+
+    # 2) 草拟（可能返回多个候选/每簇）
+    drafts: List[Dict[str, Any]] = []
     for c in clusters[:max_templates]:
-        d = _lc_draft(llm_drafter, c)
-        drafts.append(d)
+        d_list = _lc_draft(llms["drafter"], c, trace=trace_write if trace_enabled else None)
+        # 兼容老逻辑：若返回单 dict 则包装为 list
+        if isinstance(d_list, dict):
+            d_list = [d_list]
+        for d in d_list:
+            if isinstance(d, dict) and d.get("pattern"):
+                drafts.append(d)
 
+    # 3) 历史负样本与已有样本集
     negatives = dao.get_recent_unmatched(limit=orch.get("adversary_unmatched_limit", 100))
     matched_hist = dao.get_template_samples(limit=100)
+    if trace_enabled:
+        trace_write("hist.loaded", {"negatives": len(negatives), "matched_hist": len(matched_hist)})
 
+    # 4) 对抗与回归
     passed = []
     for d in drafts:
-        if not d.get("pattern"):
+        pat = d.get("pattern")
+        if not pat:
             continue
-        ok_adv = _lc_adversary(llm_adversary, d["pattern"], negatives)
+        ok_adv = _lc_adversary(pat, negatives, trace=trace_write if trace_enabled else None)
         if not ok_adv:
             continue
-        ok_reg = _lc_regression(llm_regressor, d["pattern"], matched_hist)
+        ok_reg = _lc_regression(pat, matched_hist, trace=trace_write if trace_enabled else None)
         if not ok_reg:
             continue
         passed.append(d)
 
-    final = _lc_arbitrate(llm_arbiter, passed)
-    return [ _mk_candidate(x["pattern"], x.get("sample_log",""), x.get("semantic_info",""), x.get("advise",""), "langchain") for x in final ]
+    # 5) 仲裁输出最终候选
+    finals = _lc_arbitrate(passed, trace=trace_write if trace_enabled else None)
+    if trace_enabled:
+        trace_write("final", {"kept": finals})
+    # 入库时仅关心必要字段，多余字段不影响
+    return [ _mk_candidate(x.get("pattern",""), x.get("sample_log",""), x.get("semantic_info",""), x.get("advise",""), "langchain") for x in finals ]
 
-def _run_langgraph(samples: List[str], cfg: Dict[str, Any], secrets: Dict[str, Any]) -> List[Dict[str, Any]]:
-    try:
-        from langgraph.graph import StateGraph, END
-    except Exception:
-        return _run_langchain(samples, cfg, secrets)
 
-    samples = _ensure_list_str(samples)
-    if not samples:
-        return []
+def _run_langgraph(samples: List[str], cfg: Dict[str, Any], secrets: Dict[str, Any], run_context: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """为保持简单与一致性，这里直接复用上面的逻辑（不是用图编辑器），从而也能完整记录“会话内容”。"""
+    return _run_langchain(samples, cfg, secrets, run_context)
 
-    agents = cfg.get("agents", {})
-    orch = cfg.get("orchestration", {})
-    max_templates = orch.get("max_templates", 10)
 
-    try:
-        lc_llm_clusterer = _build_langchain_llm(agents.get("clusterer", {}).get("model", {}), secrets)
-        lc_llm_drafter = _build_langchain_llm(agents.get("drafter", {}).get("model", {}), secrets)
-        lc_llm_adversary = _build_langchain_llm(agents.get("adversary", {}).get("model", {}), secrets)
-        lc_llm_regressor = _build_langchain_llm(agents.get("regressor", {}).get("model", {}), secrets)
-        lc_llm_arbiter = _build_langchain_llm(agents.get("arbiter", {}).get("model", {}), secrets)
-    except Exception:
-        return _run_langchain(samples, cfg, secrets)
+def _run_stub(samples: List[str], cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    # 退化模式：基于样本做启发式规则
+    outs = []
+    for s in samples[:10]:
+        text = s
+        pattern = re.sub(r"\b\d+\b", r"\\d+", re.escape(text))
+        pattern = pattern.replace(r"\/", r"\/")
+        pattern = pattern.replace(r"\<NUM\>", r".+").replace(r"\<PATH\>", r".+").replace(r"\<PATH_CPP\>", r".+")
+        pattern = pattern.replace(r"\.\.\.", r".*")
+        outs.append(_mk_candidate(pattern, text, "自动生成 分类未知 建议人工复核", "" , "stub"))
+    return outs
 
-    from typing import TypedDict, List as TList, Dict as TDict, Any as TAny
-    class St(TypedDict):
-        samples: TList[str]
-        clusters: TList[TList[str]]
-        drafts: TList[TDict[str, TAny]]
-        negatives: TList[str]
-        matched_hist: TList[str]
-        passed: TList[TDict[str, TAny]]
 
-    def n_cluster(state: St):
-        cs = _lc_cluster(lc_llm_clusterer, state["samples"])
-        state["clusters"] = cs[:max_templates]
-        return state
-
-    def n_draft(state: St):
-        drafts = []
-        for c in state["clusters"]:
-            drafts.append(_lc_draft(lc_llm_drafter, c))
-        state["drafts"] = drafts
-        return state
-
-    def n_hist(state: St):
-        state["negatives"] = dao.get_recent_unmatched(limit=orch.get("adversary_unmatched_limit", 100))
-        state["matched_hist"] = dao.get_template_samples(limit=100)
-        return state
-
-    def n_validate(state: St):
-        passed = []
-        for d in state["drafts"]:
-            pat = d.get("pattern","")
-            if not pat:
-                continue
-            ok_adv = _lc_adversary(lc_llm_adversary, pat, state["negatives"])
-            if not ok_adv:
-                continue
-            ok_reg = _lc_regression(lc_llm_regressor, pat, state["matched_hist"])
-            if not ok_reg:
-                continue
-            passed.append(d)
-        state["passed"] = passed
-        return state
-
-    def n_arb(state: St):
-        finals = _lc_arbitrate(lc_llm_arbiter, state["passed"])
-        state["passed"] = finals
-        return state
-
-    g = StateGraph(St)
-    g.add_node("cluster", n_cluster)
-    g.add_node("draft", n_draft)
-    g.add_node("hist", n_hist)
-    g.add_node("validate", n_validate)
-    g.add_node("arb", n_arb)
-    g.set_entry_point("cluster")
-    g.add_edge("cluster", "draft")
-    g.add_edge("draft", "hist")
-    g.add_edge("hist", "validate")
-    g.add_edge("validate", "arb")
-    g.add_edge("arb", END)
-
-    app = g.compile()
-    init = {"samples": samples, "clusters": [], "drafts": [], "negatives": [], "matched_hist": [], "passed": []}
-    out = app.invoke(init)
-    finals = out["passed"]
-    return [ _mk_candidate(x["pattern"], x.get("sample_log",""), x.get("semantic_info",""), x.get("advise",""), "langgraph") for x in finals ]
-
-def run(samples: List[str], model: str = "stub", phase: str = "v1点0", config_path: str = None) -> List[Dict[str, Any]]:
+def run(samples: List[str], model: str = "stub", phase: str = "v1点0", config_path: str = None, run_context: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """
+    增强点：
+    - 读取 agents.yaml 中的 committee.orchestration.trace_conversations 开关；若开启，记录对话到 data/agent_traces 下
+    - 每个智能体可用不同模型
+    - 安全裁剪样本长度，避免 400 错误
+    - 草拟阶段改为“一簇多候选”输出，兼容老逻辑
+    """
     app_cfg = _read_application_yaml()
     secrets = _load_secrets(app_cfg)
     cfg_path = config_path or os.environ.get("LOG_ANALYZER_AGENTS_PATH") or (((app_cfg.get("first_pass") or {}).get("committee") or {}).get("config_path")) or "configs/agents.yaml"
@@ -323,8 +397,8 @@ def run(samples: List[str], model: str = "stub", phase: str = "v1点0", config_p
     cfg = all_cfg.get("committee", all_cfg)  # 兼容直接放根上的写法
     backend = (cfg.get("backend") or model or "stub").lower()
     if backend == "langgraph":
-        return _run_langgraph(samples, cfg, secrets)
+        return _run_langgraph(samples, cfg, secrets, run_context)
     elif backend == "langchain":
-        return _run_langchain(samples, cfg, secrets)
+        return _run_langchain(samples, cfg, secrets, run_context)
     else:
         return _run_stub(samples, cfg)

@@ -6,7 +6,14 @@
 ## 快速开始
 ```bash
 python -m store.dao --init --db ./data/log_analyzer.sqlite3
+
 python bin/p0_bootstrap_seed_templates --paths sample_logs/example1.gz
+
+python -m store.dao --init --db ./data/log_analyzer.sqlite3 --ensure-dir
+
+
+
+
 python -m bin.p1_run_first_pass \
   --path test.gz \
   --size-threshold 15 \

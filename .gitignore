@@ -15,3 +15,5 @@ wheels/
 *tsv
 *txt
 *secrets*
+*sqlite3*
+*trace.jsonl
