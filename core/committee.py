@@ -1,5 +1,27 @@
 # -*- coding: utf-8 -*-
 from typing import List, Dict, Any, Optional
+
+
+def _truncate_samples_for_llm(samples, max_chars: int = 32000, max_items: int = 120):
+    """将样本做去重与长度裁剪，保证传给 LLM 的输入在安全范围。
+    策略：优先保留较短、多样的样本；按长度从短到长取，直到达到上限。
+    """
+    if not samples:
+        return []
+    seen = set()
+    uniq = []
+    for s in samples:
+        if s not in seen:
+            seen.add(s)
+            uniq.append(s)
+    uniq_sorted = sorted(uniq, key=len)
+    out, total = [], 0
+    for s in uniq_sorted[:max_items]:
+        if total + len(s) + 1 > max_chars:
+            break
+        out.append(s); total += len(s) + 1
+    return out
+
 import os
 from core.utils.config import load_yaml
 from store import dao
@@ -132,9 +154,8 @@ def _lc_cluster(llm, samples: List[str]) -> List[List[str]]:
 def _lc_draft(llm, cluster_samples: List[str]) -> Dict[str, Any]:
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.output_parsers import JsonOutputParser
-    # 提示词转为内部模板字段: pattern, sample_log, semantic_info, advise
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "你是自动驾驶日志正则草拟助手。基于下方样本生成一个尽量简洁且泛化的正则。务必以 JSON 返回，键为 pattern, sample_log, semantic_info, advise。"),
+        ("system", "根据样本生成一个尽量简洁且泛化的正则。以 JSON 返回：{{pattern, sample_log, semantic_info, advise}}。"),
         ("user", "{samples}")
     ])
     chain = prompt | llm | JsonOutputParser()
@@ -165,7 +186,6 @@ def _lc_regression(llm, pattern: str, history_matched: List[str]) -> bool:
     return ok >= max(1, int(len(history_matched) * 0.6))
 
 def _lc_arbitrate(llm, drafts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    # MVP: 直接放行，通过后续索引与第二遍再优化
     return drafts
 
 def _run_langchain(samples: List[str], cfg: Dict[str, Any], secrets: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -294,13 +314,6 @@ def _run_langgraph(samples: List[str], cfg: Dict[str, Any], secrets: Dict[str, A
     out = app.invoke(init)
     finals = out["passed"]
     return [ _mk_candidate(x["pattern"], x.get("sample_log",""), x.get("semantic_info",""), x.get("advise",""), "langgraph") for x in finals ]
-
-def _run_stub(samples: List[str], cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
-    # 离线调试占位
-    outs = []
-    for s in samples[: min(3, len(samples)) ]:
-        outs.append(_mk_candidate(pattern=".*"+s.split(" ")[0]+".*", sample_log=s, semantic_info="", advise="", source="stub"))
-    return outs
 
 def run(samples: List[str], model: str = "stub", phase: str = "v1点0", config_path: str = None) -> List[Dict[str, Any]]:
     app_cfg = _read_application_yaml()

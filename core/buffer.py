@@ -23,11 +23,11 @@ class DiversityBuffer:
         for m in misses:
             if len(out) >= self.max_per_micro_batch:
                 break
-            nm = _norm(m)
-            h = _hash(nm)
+            # nm = _norm(m)
+            h = _hash(m)
             if h in self.hset:
                 continue
-            out.append(nm)
+            out.append(m)
         return out
 
     def add(self, picked: List[str]):
