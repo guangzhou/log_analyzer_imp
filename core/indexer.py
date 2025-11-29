@@ -25,6 +25,12 @@ class Indexer:
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
 
+    # 新增: 同步重建索引, 供同步版 P1 在写入新模板后立即生效
+    def build_new_index_sync(self):
+        items = [{"template_id": r["template_id"], "pattern": r["pattern"]} for r in dao.fetch_all_templates(True)]
+        new_idx = CompiledIndex(items)
+        self.atomic_switch(new_idx)
+
     def atomic_switch(self, new_handle: CompiledIndex):
         with self._lock:
             self._active = new_handle
