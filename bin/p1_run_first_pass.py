@@ -1,29 +1,28 @@
 # -*- coding: utf-8 -*-
 """
-第一遍 P1: 规则演进与总规则更新
-最小侵入式调整:
-1) 写完 xx.normal.txt 后, 额外产出:
-   - xx_uniq.txt: 关键文本排序去重
-   - xx_uniq_with_count.tsv: 关键文本 + 在 normal 中出现的次数
-2) 匹配与缓冲改为基于 xx_uniq.txt 的关键文本进行, 减少重复匹配
-其余 LLM 阈值触发、模板写入、索引双缓冲与原子切换逻辑不变
+第一遍 P1: 规则演进与总规则更新  同步版
+最小侵入式调整要点:
+1) 仍然生成:
+   - xx.normal.txt: 一行一日志 且清洗 ANSI 控制字符
+   - xx_uniq.txt 与 xx_uniq_with_count.tsv: 关键文本排序去重与计数
+2) 匹配与缓冲基于 xx_uniq.txt 进行, 减少重复匹配
+3) 阈值触发 LLM 改为【同步】执行, 新模板写库后立即用同步索引重建使之生效
+   - 新增: 使用 Indexer.build_new_index_sync 同步原子切换活动索引
+4) --await-llm 参数保留但无实际作用, 为兼容旧脚本调用
 """
-import os, argparse, threading, sys
+import os, argparse, sys
 from typing import List
 
-# --- 现有依赖 ---
+# 现有依赖
 from store import dao
 from core import reader, preprocessor, parser as parser_mod, matcher, buffer as buffer_mod, indexer as indexer_mod, committee, templates
 from core.utils.config import load_yaml
-
-# 新增: 关键文本抽取与去重计数
 from core import keytext
 
-# 新增: ANSI与控制字符清洗, 在生成 normal 之前做统一清洗
+# 清洗 ANSI 控制字符, 在生成 normal 之前统一处理
 try:
     from preprocess.sanitizers import sanitize_line
 except Exception:
-    # 兼容相对执行路径
     ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     if ROOT not in sys.path:
         sys.path.insert(0, ROOT)
@@ -40,7 +39,6 @@ def calc_file_id(path: str) -> str:
 def _derive_normal_path(path: str, override: str = None) -> str:
     if override:
         return override
-    # 去掉 .gz 或最后一个扩展名, 生成 .normal.txt
     if path.endswith(".gz"):
         base = path[:-3]
     else:
@@ -52,23 +50,16 @@ def _derive_normal_path(path: str, override: str = None) -> str:
 
 def _derive_uniq_paths(normal_path: str) -> tuple:
     base, _ = os.path.splitext(normal_path)
-    uniq_txt = base + "_uniq.txt"
-    uniq_tsv = base + "_uniq_with_count.tsv"
-    return uniq_txt, uniq_tsv
+    return base + "_uniq.txt", base + "_uniq_with_count.tsv"
 
 
 def write_normal_file(path: str, out_path: str, chunk_lines: int = 10000) -> int:
-    """
-    在原有 normalize_lines 之前, 先对原始行做 ANSI/控制字符清洗。
-    保持“一行一日志”与轻量标准化的一致性。
-    """
+    """在 normalize_lines 之前先清洗 ANSI/控制字符, 保持一行一日志与轻量标准化一致性。"""
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     total = 0
     with open(out_path, "w", encoding="utf-8") as out:
         for chunk in reader.read_in_chunks(path, chunk_lines=chunk_lines):
-            # 逐行清洗 ANSI 控制符等
             cleaned = [sanitize_line(x) for x in chunk if x]
-            # 继续走既有规整逻辑
             normed = preprocessor.normalize_lines(cleaned)
             for line in normed:
                 out.write(line + "\n")
@@ -77,16 +68,9 @@ def write_normal_file(path: str, out_path: str, chunk_lines: int = 10000) -> int
 
 
 def build_uniq_files(normal_path: str, chunk_lines: int = 10000) -> tuple:
-    """
-    从 xx.normal.txt 抽取关键文本, 排序去重并计数:
-    产出:
-      - xx_uniq.txt
-      - xx_uniq_with_count.tsv
-    返回: (uniq_txt_path, uniq_tsv_path, uniq_count, uniq_distinct)
-    """
+    """从 xx.normal.txt 抽取关键文本, 排序去重并计数, 产出 xx_uniq.txt 与 xx_uniq_with_count.tsv"""
     uniq_txt, uniq_tsv = _derive_uniq_paths(normal_path)
 
-    # 统计计数
     counter = {}
     for chunk in reader.read_in_chunks(normal_path, chunk_lines=chunk_lines):
         for kt in keytext.iter_key_texts(chunk):
@@ -95,12 +79,10 @@ def build_uniq_files(normal_path: str, chunk_lines: int = 10000) -> tuple:
     uniq_list = sorted(counter.keys())
     os.makedirs(os.path.dirname(uniq_txt) or ".", exist_ok=True)
 
-    # 写 xx_uniq.txt
     with open(uniq_txt, "w", encoding="utf-8") as f1:
         for k in uniq_list:
             f1.write(k + "\n")
 
-    # 写 xx_uniq_with_count.tsv (count \t key_text)
     with open(uniq_tsv, "w", encoding="utf-8") as f2:
         for k in uniq_list:
             f2.write(f"{counter[k]}\t{k}\n")
@@ -127,8 +109,8 @@ def main():
     ap.add_argument("--micro-batch", type=int, default=None, help="微批大小")
     ap.add_argument("--match-workers", type=int, default=None, help="每批匹配并发 worker 数")
     ap.add_argument("--config", type=str, default="configs/application.yaml", help="应用配置")
-    ap.add_argument("--await-llm", action="store_true", help="在进程退出前等待异步 LLM 处理完成")
-    ap.add_argument("--force-flush", action="store_true", help="结束时强制冲洗缓冲区以触发一次 LLM")
+    ap.add_argument("--await-llm", action="store_true", help="兼容旧参数 无实际作用")
+    ap.add_argument("--force-flush", action="store_true", help="结束时强制冲洗缓冲区并同步调用 LLM")
     args = ap.parse_args()
 
     appcfg = load_yaml(args.config) or {}
@@ -143,15 +125,13 @@ def main():
     size_threshold = args.size_threshold or bufcfg.get("size_threshold", 100)
     max_per_mb = args.max_per_micro_batch or bufcfg.get("max_per_micro_batch", 15)
 
-    # 关键修正: 从 agents.yaml 的 committee.backend 读取后端, 避免默认成 "stub"
-    # 仍然把该值传入 committee.run 的 model 形参以保持兼容
+    # 关键修正: 从 agents.yaml 的 committee.backend 读取后端, 传入 committee.run 的 model 形参以保持兼容
     committee_backend = cmcfg.get("backend", cmcfg.get("model", "langgraph"))
     agents_cfg_path = cmcfg.get("config_path", "configs/agents.yaml")
     phase = cmcfg.get("phase", "v1点0")
 
     path = args.path
     normal_path = _derive_normal_path(path, args.normal_out)
-    uniq_txt, uniq_tsv = _derive_uniq_paths(normal_path)
 
     # 注册文件与会话
     file_id = calc_file_id(path)
@@ -192,7 +172,16 @@ def main():
         return [items[i:i+size] for i in range(0, len(items), size)]
 
     micro_batches = _split_batches(key_lines, micro_batch)
-    llm_threads: List[threading.Thread] = []
+
+    def _run_llm_sync(samples: List[str]):
+        """同步触发智能体委员会, 写模板并同步原子切换索引。"""
+        if not samples:
+            return
+        cands = committee.run(samples, model=committee_backend, phase=phase, config_path=agents_cfg_path)
+        if cands:
+            templates.write_candidates(cands)
+            # 同步重建索引并切换, 让新规则立刻生效
+            idx.build_new_index_sync()
 
     for i, batch in enumerate(micro_batches, 1):
         objs = [_KeyTextObj(k) for k in batch]
@@ -204,48 +193,21 @@ def main():
             picked = dbuf.pick_for_buffer(misses)
             dbuf.add(picked)
 
-        # 阈值触发异步 LLM
+        # 阈值触发 同步 LLM
         if dbuf.reached_threshold():
             samples = dbuf.snapshot_and_lock()
+            try:
+                _run_llm_sync(samples)
+            finally:
+                dbuf.clear_locked_batch()
 
-            def _async_proc():
-                try:
-                    # 与现有 committee.run 兼容: model 参数传入 backend 值; 真实分支由 YAML 配置决定
-                    cands = committee.run(samples, model=committee_backend, phase=phase, config_path=agents_cfg_path)
-                    if cands:
-                        templates.write_candidates(cands)
-                        idx.build_new_index_async()
-                except Exception as e:
-                    # 异常不阻断主流程
-                    print(f"[P1][LLM] 异步处理异常: {e}")
-                finally:
-                    dbuf.clear_locked_batch()
-
-            th = threading.Thread(target=_async_proc, daemon=True)
-            th.start()
-            llm_threads.append(th)
-
-    # 结束时可选强制冲洗一次缓冲
+    # 结束时可选强制冲洗一次缓冲, 同步 LLM
     if args.force_flush:
         samples = dbuf.snapshot_and_lock()
-        if samples:
-            def _async_proc2():
-                try:
-                    cands = committee.run(samples, model=committee_backend, phase=phase, config_path=agents_cfg_path)
-                    if cands:
-                        templates.write_candidates(cands)
-                        idx.build_new_index_async()
-                except Exception as e:
-                    print(f"[P1][LLM] 异步处理异常: {e}")
-                finally:
-                    dbuf.clear_locked_batch()
-            th2 = threading.Thread(target=_async_proc2, daemon=True)
-            th2.start()
-            llm_threads.append(th2)
-
-    if args.await_llm:
-        for th in llm_threads:
-            th.join()
+        try:
+            _run_llm_sync(samples)
+        finally:
+            dbuf.clear_locked_batch()
 
     dao.complete_run_session(run_id, total_lines=len(parsed_all), preprocessed_lines=pre_lines, unmatched_lines=0, status="成功")
     print(f"[OK] 第一遍完成 file_id={file_id}, normal={normal_path}")
