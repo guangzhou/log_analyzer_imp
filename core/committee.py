@@ -323,18 +323,26 @@ def _run_langchain(samples: List[str], cfg: Dict[str, Any], secrets: Dict[str, A
     llms = _build_llms_for_agents(agents, secrets)
 
     # 1) 聚类
-    clusters = _lc_cluster(llms["clusterer"], samples, trace=trace_write if trace_enabled else None)
+    # clusters = _lc_cluster(llms["clusterer"], samples, trace=trace_write if trace_enabled else None)
 
-    # 2) 草拟（可能返回多个候选/每簇）
+    # # 2) 草拟（可能返回多个候选/每簇）
+    # drafts: List[Dict[str, Any]] = []
+    # for c in clusters[:max_templates]:
+    #     d_list = _lc_draft(llms["drafter"], c, trace=trace_write if trace_enabled else None)
+    #     # 兼容老逻辑：若返回单 dict 则包装为 list
+    #     if isinstance(d_list, dict):
+    #         d_list = [d_list]
+    #     for d in d_list:
+    #         if isinstance(d, dict) and d.get("pattern"):
+    #             drafts.append(d)
     drafts: List[Dict[str, Any]] = []
-    for c in clusters[:max_templates]:
-        d_list = _lc_draft(llms["drafter"], c, trace=trace_write if trace_enabled else None)
-        # 兼容老逻辑：若返回单 dict 则包装为 list
-        if isinstance(d_list, dict):
-            d_list = [d_list]
-        for d in d_list:
-            if isinstance(d, dict) and d.get("pattern"):
-                drafts.append(d)
+    d_list = _lc_draft(llms["drafter"], samples, trace=trace_write if trace_enabled else None)
+    # 兼容老逻辑：若返回单 dict 则包装为 list
+    if isinstance(d_list, dict):
+        d_list = [d_list]
+    for d in d_list:
+        if isinstance(d, dict) and d.get("pattern"):
+            drafts.append(d)
 
     # 3) 历史负样本与已有样本集
     negatives = dao.get_recent_unmatched(limit=orch.get("adversary_unmatched_limit", 100))
@@ -345,15 +353,15 @@ def _run_langchain(samples: List[str], cfg: Dict[str, Any], secrets: Dict[str, A
     # 4) 对抗与回归
     passed = []
     for d in drafts:
-        pat = d.get("pattern")
-        if not pat:
-            continue
-        ok_adv = _lc_adversary(pat, negatives, trace=trace_write if trace_enabled else None)
-        if not ok_adv:
-            continue
-        ok_reg = _lc_regression(pat, matched_hist, trace=trace_write if trace_enabled else None)
-        if not ok_reg:
-            continue
+        # pat = d.get("pattern")
+        # if not pat:
+        #     continue
+        # ok_adv = _lc_adversary(pat, negatives, trace=trace_write if trace_enabled else None)
+        # if not ok_adv:
+        #     continue
+        # ok_reg = _lc_regression(pat, matched_hist, trace=trace_write if trace_enabled else None)
+        # if not ok_reg:
+        #     continue
         passed.append(d)
 
     # 5) 仲裁输出最终候选
