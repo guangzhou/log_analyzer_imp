@@ -2,12 +2,40 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Run p3_launch_description_ui (Streamlit)",
+      "type": "python",
+      "request": "launch",
+      "module": "streamlit",
+      "args": [
+        "run",
+        "bin.p3_launch_description_ui"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true,
+      "django": false
+    },
+
+     {
+      "name": "Run p2_run_second_pass",
+      "type": "python",
+      "request": "launch",
+      "module": "bin.p2_run_second_pass",
+      "args": [
+        "--path", "t1.normal.txt",
+        "--file-id", "auto"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
       "name": "Run p1_run_first_pass (with await-llm)",
       "type": "python",
       "request": "launch",
       "module": "bin.p1_run_first_pass",
       "args": [
-        "--path", "test.gz",
+        "--path", "t1.gz",
         "--size-threshold", "15",
         "--micro-batch", "30",
         "--max-per-micro-batch", "30",
@@ -24,7 +52,7 @@
       "request": "launch",
       "module": "bin.p1_run_first_pass",
       "args": [
-        "--path", "test.gz",
+        "--path", "t1.gz",
         "--size-threshold", "15",
         "--micro-batch", "30",
         "--max-per-micro-batch", "30",
