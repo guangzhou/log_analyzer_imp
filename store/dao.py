@@ -16,26 +16,18 @@ from typing import List, Dict, Any, Iterable, Tuple
 DEFAULT_DB = os.environ.get("LOG_ANALYZER_DB", "./data/log_analyzer.sqlite3")
 
 def _connect(db_path: str = DEFAULT_DB) -> sqlite3.Connection:
-    # 若父目录不存在，sqlite 不会创建；调用方应确保目录存在
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db(db_path: str = DEFAULT_DB, schema_path: str = None):
-    """
-    初始化数据库，执行 schema.sql 脚本
-    """
-    # 自动创建父目录
     parent = os.path.dirname(os.path.abspath(db_path))
     if parent and not os.path.exists(parent):
         os.makedirs(parent, exist_ok=True)
-
-    # schema 默认取与本文件同目录
     if not schema_path:
         schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")
     if not os.path.exists(schema_path):
         raise FileNotFoundError(f"找不到 schema 文件: {schema_path}")
-
     with _connect(db_path) as conn:
         with open(schema_path, "r", encoding="utf-8") as f:
             conn.executescript(f.read())
@@ -63,7 +55,7 @@ def complete_run_session(run_id: int, **kwargs):
     fields = []
     values = []
     for k, v in kwargs.items():
-        if k in ["total_lines", "preprocessed_lines", "unmatched_lines", "status"]:
+        if k in ["total_lines", "preprocessed_lines", "unmatched_lines", "matched_lines", "status"]:
             fields.append(f"{k}=?")
             values.append(v)
     fields.append("ended_at=?")

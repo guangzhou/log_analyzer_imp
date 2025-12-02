@@ -2,7 +2,9 @@
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, NamedTuple, Optional, Any
-
+import logging
+from core.utils.logger import get_logger 
+logger = get_logger("myapp", level=logging.DEBUG, rotate="day")   
 class MatchResult(NamedTuple):
     is_hit: bool
     template_id: Optional[int]
@@ -12,7 +14,16 @@ class MatchResult(NamedTuple):
 
 class CompiledIndex:
     def __init__(self, items: List[dict]):
-        self.items = [(it["template_id"], it["pattern"], re.compile(it["pattern"])) for it in items if it.get("pattern")]
+        self.items = []
+        for it in items:
+            if it.get("pattern"):
+                try:
+                    compiled_pattern = re.compile(it["pattern"])
+                    self.items.append((it["template_id"], it["pattern"], compiled_pattern))
+                except re.error as e:
+                    # 记录编译失败的 pattern，但继续处理其他项
+                    logger.error(f"Warning: Failed to compile pattern '{it['pattern']}' for template_id {it.get('template_id')}: {e}")
+                    continue
 
     def match_one(self, text: str) -> Optional[int]:
         for tid, pat, creg in self.items:

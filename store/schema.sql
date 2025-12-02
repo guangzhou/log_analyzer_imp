@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS run_session (
   total_lines INTEGER,
   preprocessed_lines INTEGER,
   unmatched_lines INTEGER,
+  matched_lines INTEGER,  -- 新增：整文件匹配总数
   status TEXT,
   FOREIGN KEY(file_id) REFERENCES file_registry(file_id)
 );

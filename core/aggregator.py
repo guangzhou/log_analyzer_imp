@@ -48,14 +48,14 @@ class Aggregator:
             return
         if self.summary:
             dao.batch_upsert_log_match_summary(list(self.summary.values()))
-        if self.time_bucket:
-            trows = []
-            for (template_id, mod, smod, classification, level, thread_id, b), cnt in self.time_bucket.items():
-                trows.append(dict(run_id=self.run_id, file_id=self.file_id,
-                                  template_id=template_id, mod=mod, smod=smod, classification=classification,
-                                  level=level, thread_id=thread_id, bucket_granularity=self.bucket_granularity,
-                                  bucket_start=b, count_in_bucket=cnt))
-            dao.batch_upsert_key_time_bucket(trows)
+        # if self.time_bucket:
+        #     trows = []
+        #     for (template_id, mod, smod, classification, level, thread_id, b), cnt in self.time_bucket.items():
+        #         trows.append(dict(run_id=self.run_id, file_id=self.file_id,
+        #                           template_id=template_id, mod=mod, smod=smod, classification=classification,
+        #                           level=level, thread_id=thread_id, bucket_granularity=self.bucket_granularity,
+        #                           bucket_start=b, count_in_bucket=cnt))
+        #     dao.batch_upsert_key_time_bucket(trows)
         self.summary.clear()
         self.time_bucket.clear()
         self._line_acc = 0

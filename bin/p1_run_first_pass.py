@@ -62,7 +62,7 @@ def write_normal_file(path: str, out_path: str, chunk_lines: int = 10000) -> int
             cleaned = [sanitize_line(x) for x in chunk if x]
             normed = preprocessor.normalize_lines(cleaned)
             for line in normed:
-                out.write(line + "\n")
+                out.write(line.replace(">>>"," ") .replace(">>>"," ") + "\n")
                 total += 1
     return total
 
@@ -118,8 +118,8 @@ def main():
     idxcfg = fp.get("indexer", {})
     cmcfg = fp.get("committee", {})
 
-    chunk_lines = args.chunk_lines or fp.get("read_chunk_lines", 10000)
-    micro_batch = args.micro_batch or fp.get("micro_batch_size", 20)
+    chunk_lines = args.chunk_lines or fp.get("read_chunk_lines", 5000)
+    micro_batch = args.micro_batch or fp.get("micro_batch_size", 15)
     match_workers = args.match_workers or fp.get("match_workers_per_batch", 4)
     size_threshold = args.size_threshold or bufcfg.get("size_threshold", 100)
     max_per_mb = args.max_per_micro_batch or bufcfg.get("max_per_micro_batch", 15)

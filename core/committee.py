@@ -133,6 +133,18 @@ def _build_langchain_llm(model_cfg: Dict[str, Any], secrets: Dict[str, Any]):
         )
 
         temperature = model_cfg.get("temperature", 0.0)
+        # ========= 新增：透传自定义 body 参数（比如 GLM-4.6 的 thinking） =========
+        # 通用入口：agents.yaml 里可以写 model.model_kwargs / model.thinking / model.disable_thinking
+        model_kwargs: Dict[str, Any] = dict(model_cfg.get("model_kwargs") or {})
+
+        # 允许直接在 agents.yaml 里写：
+        # thinking:
+        #   type: disabled
+        if "thinking" in model_cfg and "thinking" not in model_kwargs:
+            model_kwargs["thinking"] = model_cfg["thinking"]
+
+         
+            
 
         default_headers = None
         if auth_scheme and auth_scheme.lower() != "bearer":
@@ -152,7 +164,104 @@ def _build_langchain_llm(model_cfg: Dict[str, Any], secrets: Dict[str, Any]):
 
 
 # ------------------------------ 带“会话内容”记录的 LLM 代理 ------------------------------
+    # msg 可能是 AIMessage，也可能是 str，简单兼容一下
+    from langchain_core.messages import AIMessage
+    if isinstance(msg, AIMessage):
+        text = msg.content
+    else:
+        text = msg
 
+    # content 可能是 str 或 list[dict/...]
+    if isinstance(text, list):
+        parts = []
+        for p in text:
+            if isinstance(p, dict) and "text" in p:
+                parts.append(p["text"])
+            else:
+                parts.append(str(p))
+        text = "".join(parts)
+    else:
+        text = str(text)
+
+    # 去掉前缀的 <think> ... </think>
+    clean = re.sub(r"^<think>[\s\S]*?</think>\s*", "", text).strip()
+    return json.loads(clean)
+
+def _parse_json_after_think(msg: Any):
+    """
+    兼容 GLM 带 <think> 标签 或 其他前缀噪音的 JSON 解析器：
+    - msg 可能是 str，也可能是 LangChain 的 AIMessage / content-chunks list
+    - 会自动剥离 <think>...</think> 和前缀噪音，从第一个 '[' 或 '{' 开始做 json.loads
+    """
+    try:
+        # 1. 先把各种类型都归一成纯字符串
+        try:
+            from langchain_core.messages import BaseMessage
+        except Exception:
+            BaseMessage = object  # 如果没有这玩意，就当普通 object
+
+        if isinstance(msg, BaseMessage):
+            content = msg.content
+        else:
+            content = msg
+
+        # content 可能是 str 或 list[dict/...]
+        if isinstance(content, list):
+            parts = []
+            for p in content:
+                if isinstance(p, dict):
+                    # 兼容 OpenAI / 新 SDK 的几种格式
+                    if "text" in p:
+                        v = p["text"]
+                        if isinstance(v, dict) and "value" in v:
+                            parts.append(str(v["value"]))
+                        else:
+                            parts.append(str(v))
+                    elif "content" in p:
+                        parts.append(str(p["content"]))
+                    else:
+                        parts.append(str(p))
+                else:
+                    parts.append(str(p))
+            text = "".join(parts)
+        else:
+            text = str(content)
+
+        # 2. 去掉 BOM 和前导空白
+        text = text.lstrip("\ufeff \t\r\n")
+
+        # 3. 如果有 <think>...</think>，把它以及之前的内容全部干掉
+        if "<think>" in text and "</think>" in text:
+            end = text.find("</think>")
+            if end != -1:
+                text = text[end + len("</think>") :]
+
+        # 4. 再去掉前导空白
+        text = text.lstrip()
+
+        # 5. 从第一个 '[' 或 '{' 开始截断
+        first = len(text)
+        for ch in "[{":
+            idx = text.find(ch)
+            if idx != -1 and idx < first:
+                first = idx
+
+        if first == len(text):
+            # 找不到 JSON 起始符，直接报清楚一点的错
+            raise ValueError(f"No JSON array/object start found in: {text[:80]!r}")
+
+        text = text[first:]
+
+        # debug 的时候可以顺手 print 一下看看
+        # print("CLEAN TEXT:", repr(text))
+
+        # 6. 正常 json 解析
+        return json.loads(text)
+
+    except Exception as e:
+        # 解析失败时返回空值，而不是抛出异常
+        print(f"Warning: Failed to parse JSON after think: {e}")
+        return []
 def _trace_prep(orchestration_cfg: Dict[str, Any], run_context: Optional[Dict[str, Any]]):
     """根据配置决定是否开启对话记录，返回 (enabled, writer)。"""
     orch = orchestration_cfg or {}
@@ -189,9 +298,10 @@ def _lc_cluster(llm, samples: List[str], trace=None) -> List[List[str]]:
         ("user", "{samples}")
     ])
     if trace:
+        print(111)
         # 记录格式化后的消息
-        msgs = prompt.format_messages(samples="\n".join(samples))
-        trace("cluster.prompt", {"messages": [dict(type=m.type, content=m.content) for m in msgs]})
+        # msgs = prompt.format_messages(samples="\n".join(samples))
+        # trace("cluster.prompt", {"messages": [dict(type=m.type, content=m.content) for m in msgs]})
     chain = prompt | llm | JsonOutputParser()
     clusters = chain.invoke({"samples": "\n".join(samples)})
     clusters = [ [x for x in c if isinstance(x, str) and x.strip()] for c in clusters if isinstance(c, list) ]
@@ -208,22 +318,52 @@ def _lc_draft(llm, cluster_samples: List[str], trace=None) -> List[Dict[str, Any
     """
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.output_parsers import JsonOutputParser
+    from langchain_core.runnables import RunnableLambda
 
     system_text = (
-        "你是一个自动驾驶系统问题分析专家，对报错日志进行分类与规则抽取。"
-        "请分析多条样本日志，并输出 JSON 数组。数组中每个元素必须包含字段："
-        "pattern, sample_log, semantic_info；可选字段：advise, category。"
-        "要求：pattern 为尽量简洁且泛化的正则；sample_log 选用代表性样本；"
-        "semantic_info 用一句话概括问题；advise 仅对错误类可给出处理建议。"
-        "注意：只输出 JSON 数组本体，不要多余文字。"
+        "你是一个自动驾驶系统问题分析专家，对报错/日志进行语义归类和正则抽取。\n"
+        "你会收到一个 JSON 数组，数组中的每个元素是一条完整的日志字符串（可能很长）。\n"
+        "你的任务是：根据这些日志，生成若干条【泛化良好】的正则表达式，并用 JSON 数组返回结果。\n"
+        "\n"
+        "输出格式（严格 JSON 数组）：\n"
+        "- 返回一个 JSON 数组，每个元素是一个对象，必须包含字段：pattern, sample_log, semantic_info；可选字段：advise\n"
+        "  - pattern：针对一类日志的正则表达式，尽量简洁、可泛化，不要过拟合单条样本。\n"
+        "  - sample_log：从输入样本中挑选一条最能代表该 pattern 的日志原文。\n"
+        "  - semantic_info：用一句话概括这一类日志的含义（中文）。\n"
+        "  - advise：仅对明显“错误/异常类”日志给出简短处理建议；其他情况可以是空字符串。\n"
+        "\n"
+        "重要约束：\n"
+        "1. 请先在心里按“语义相近”对日志样本进行分组，然后为每一组生成 1~N 条 pattern。\n"
+        "2. 确保【所有输入样本】都至少能被你返回的某一条 pattern 匹配到，不能遗漏任何一条日志。\n"
+        "3. pattern 的数量应当不大于样本行数，避免一行样本生成多个几乎一样的模式。\n"
+        "4. 文本中出现的 'NUMNUM' 是【占位符保留标记】，在 pattern 中必须原样保留：\n"
+        "   - 不要把 'NUMNUM' 改写成 '\\d+' 或其他形式；\n"
+        "   - 不要对 'NUMNUM' 做额外转义或改动；\n"
+        "   - 只对真正的数字或时间戳等做适度正则化（例如用 '\\d+'）。\n"
+        "5. 复杂且高度重复、有明显规律的日志，请提取关键字段进行归纳，不要机械地为每一条都生成一条几乎相同的正则。\n"
+        "6. 只允许输出 JSON 数组本体 不要格式化，只要压缩的json字符串：\n"
+        "   - 不能输出 ```json 这样的代码块标记；\n"
+        "   - 不能在 JSON 前后添加说明文字、注释或其他自然语言。\n"
+        "   - 不要输出和返回思考过程\n"
+
     )
     # 使用双花括号展示示例（避免被当作模板变量）
     example_text = (
-        "示例输入：\n"
-        "Auto gen vx graph(DAADBevDetTemporal6v) failed\n"
-        "Auto gen vx graph(DAADBevDetTemporal5v) failed\n"
-        "示例输出：\n"
-        '[{{"semantic_info":"VX 图生成失败","advise":"检查图生成流程中的参数配置与系统资源","pattern":"Auto gen vx graph(.*) failed.","sample_log":"Auto gen vx graph(DAADBevDetTemporal6v) failed."}}]'
+    '示例（仅供参考，不要死记示例里的正则）：\n'
+    '示例输入 JSON 数组：\n'
+    '["Auto gen vx graph(DAADBevDetTemporal6v) failed",\n'
+    ' "Auto gen vx graph(DAADBevDetTemporal5v) failed",\n'
+    ' "seletct_mot_id: NUMNUM NUMNUM",\n'
+    ' "seletct_mot_id: NUMNUM",\n'
+    ' "seletct_mot_id: NUMNUM NUMNUM NUMNUM",\n'
+    ' "front side mots: [(NUMNUM, NUMNUM), ], [], [(NUMNUM, NUMNUM), (NUMNUM, NUMNUM),]",\n'
+    ' "front side mots: [], [], [(NUMNUM, NUMNUM), ]",\n'
+    ' "front side mots: [], [], [(NUMNUM, NUMNUM), ],[],[]"]\n'
+    '\n'
+    '示例输出 JSON 数组（压缩形式，注意这里是 JSON 数组本身，不是被引号包裹的字符串）：\n'
+    '[{{"pattern":"^Auto gen vx graph\\\\(.*\\\\) failed$","sample_log":"Auto gen vx graph(DAADBevDetTemporal6v) failed","semantic_info":"VX 图生成失败","advise":"检查图生成流程中的参数配置与系统资源"}},'
+    '{{"pattern":"^seletct_mot_id: (?:NUMNUM)(?: NUMNUM)*$","sample_log":"seletct_mot_id: NUMNUM NUMNUM","semantic_info":"模块选出的 MOT 目标 ID 列表","advise":""}},'
+    '{{"pattern":"^front side mots: .*$","sample_log":"front side mots: [(NUMNUM, NUMNUM), ], [(NUMNUM, NUMNUM), ], [(NUMNUM, NUMNUM), ]","semantic_info":"车前方区域的 MOT 跟踪目标列表","advise":""}}]\n'
     )
 
     prompt = ChatPromptTemplate.from_messages([
@@ -235,8 +375,18 @@ def _lc_draft(llm, cluster_samples: List[str], trace=None) -> List[Dict[str, Any
         msgs = prompt.format_messages(samples="\n".join(cluster_samples))
         trace("draft.prompt", {"messages": [dict(type=m.type, content=m.content) for m in msgs]})
 
-    chain = prompt | llm | JsonOutputParser()
-    out = chain.invoke({"samples": "\n".join(cluster_samples)})
+    # chain = prompt | llm | JsonOutputParser()
+    
+    chain = prompt | llm | RunnableLambda(_parse_json_after_think)
+      
+    jsonstr=json.dumps(cluster_samples)
+    out = chain.invoke({"samples":  jsonstr})
+
+    # 检查解析结果是否为空，如果为空则跳过处理
+    if not out or (isinstance(out, list) and len(out) == 0):
+        if trace:
+            trace("draft.empty_result", {"warning": "JSON parsing returned empty, skipping draft processing"})
+        return []
 
     # 兼容：如果模型误返回 dict，转为 list
     if isinstance(out, dict):

@@ -9,6 +9,13 @@ from typing import Iterable, Iterator, Tuple, List, Dict
 
 # 行首连续的 [ ... ] 区段, 包含紧随的空白
 _LEADING_BRACKETS = re.compile(r'^(?:\[[^\]\n]*\]\s*)+')
+# 匹配数字, 包括小数点 
+# pattern =r'(?<![a-zA-Z])-?(?:\d+(?:\.\d*)?|\.\d+)\b'
+# pattern = r'(?<![a-zA-Z])-?(?:\d+(?:\.\d*)?|\.\d+)\b'
+# pattern = r'(?<![a-zA-Z])-?(?:\d+(?:\.\d*)?|\.\d+)\b'
+num_pattern = r'(?<![a-zA-Z])-?(?:\d+(?:\.\d*)?|\.\d+)'
+# pattern = r'(?<![a-zA-Z0-9])-?(?:\d+(?:\.\d*)?|\.\d+)'
+
 
 def extract_key_text(line: str) -> str:
     """
@@ -19,6 +26,8 @@ def extract_key_text(line: str) -> str:
         return ""
     # 去除行首连续中括号段
     s = _LEADING_BRACKETS.sub('', line)
+    ##归一化数字
+    s = re.sub(num_pattern, 'NUMNUM',  s)
     # 收尾空白
     s = s.strip()
     return s
@@ -29,6 +38,7 @@ def iter_key_texts(lines: Iterable[str]) -> Iterator[str]:
         if not ln:
             continue
         kt = extract_key_text(ln)
+        
         if kt:
             yield kt
 
