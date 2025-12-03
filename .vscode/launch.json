@@ -1,6 +1,18 @@
 {
   "version": "0.2.0",
   "configurations": [
+     {
+      "name": "Run p3_fill_descriptions (dry-run)",
+      "type": "python",
+      "request": "launch",
+      "module": "bin.p3_fill_descriptions",
+      "args": [
+        "--dry-run"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
     {
       "name": "Run p3_launch_description_ui (Streamlit)",
       "type": "python",
