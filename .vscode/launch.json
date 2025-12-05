@@ -34,7 +34,8 @@
       "request": "launch",
       "module": "bin.p2_run_second_pass",
       "args": [
-        "--path", "t1.normal.txt",
+        "--path", "test.gz", 
+        "--normal-in", "test.normal.txt", 
         "--file-id", "auto"
       ],
       "console": "integratedTerminal",

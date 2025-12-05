@@ -21,6 +21,9 @@ def main():
     ap.add_argument("--chunk-lines", type=int, default=None)
     ap.add_argument("--micro-batch", type=int, default=None)
     ap.add_argument("--match-workers", type=int, default=None)
+    
+    # 👇 添加这一行！
+    ap.add_argument("--file-id", type=str, default="auto", help="文件标识符，用于输出命名等")
     ap.add_argument("--config", type=str, default="configs/application.yaml")
     args = ap.parse_args()
 

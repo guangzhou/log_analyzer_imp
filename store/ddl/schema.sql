@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS REGEX_TEMPLATE (
   template_id INTEGER PRIMARY KEY AUTOINCREMENT,
   pattern TEXT,
   sample_log TEXT,
+  pattern_nomal TEXT,
   version INTEGER,
   is_active INTEGER,
   semantic_info TEXT,

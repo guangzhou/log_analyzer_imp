@@ -7,7 +7,7 @@ class Indexer:
     def __init__(self):
         self._lock = threading.RLock()
         self._active = None  # type: ignore
-
+    numeric_pattern = r'[-+]?(?:\d+\.\d*|\.\d+|\d+)'
     def load_initial(self):
         items = [{"template_id": r["template_id"], "pattern": r["pattern"]} for r in dao.fetch_all_templates(True)]
         with self._lock:
