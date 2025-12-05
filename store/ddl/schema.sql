@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS REGEX_TEMPLATE (
   pattern TEXT,
   sample_log TEXT,
   pattern_nomal TEXT,
+  pattern TEXT,
   version INTEGER,
   is_active INTEGER,
   semantic_info TEXT,
