@@ -363,7 +363,7 @@ def _lc_draft(llm, cluster_samples: List[str], trace=None) -> List[Dict[str, Any
         "   - 不要对 'NUMNUM' 做额外转义或改动；\n"
         "   - 只对真正的数字或时间戳等做适度正则化（例如用 '\\d+'）。\n"
         "5. 复杂且高度重复、有明显规律的日志，请提取关键字段进行归纳，不要机械地为每一条都生成一条几乎相同的正则。\n"
-        "6. MOTP PRED ID ts NUMNUM NUMNUM,NUMNUM,NUMNUM,NUMNUM,NUMNUM,NUMNUM,NUMNUM,NUMNUM 此类型日志不要机械的尝试指定个数^MOTP PRED ID ts NUMNUM NUMNUM(?:,NUMNUM){6,7}$  而要生成可以变化的个数的pattern 比如1个以上，例如^MOTP PRED ID ts NUMNUM NUMNUM(?:,NUMNUM){1,}$\n"
+        "6. 此类型日志不要机械的尝试 MOTP PRED ID ts NUMNUM NUMNUM,NUMNUM,NUMNUM,NUMNUM,NUMNUM,NUMNUM,NUMNUM,NUMNUM 指定个数有12个NUMNUM， 而要生成可以适配变化的个数NUMNUM的pattern 比如1个以上'\n"
         "7. 只允许输出 JSON 数组本体 不要格式化，只要压缩的json字符串：\n"
         "   - 不能输出 ```json 这样的代码块标记；\n"
         "   - 不能在 JSON 前后添加说明文字、注释或其他自然语言。\n"
