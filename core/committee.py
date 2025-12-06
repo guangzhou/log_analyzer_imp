@@ -40,9 +40,31 @@ def _default_secrets_path() -> str:
     # 可在 application.yaml 的 first_pass.committee.secrets_path 覆盖
     return os.environ.get("LOG_ANALYZER_SECRETS_PATH", "configs/secrets.yaml")
 
+ 
+def _mk_candidate(pattern: str,
+                  sample_log: str,
+                  semantic_info: str = "",
+                  advise: str = "",
+                  source: str = "委员会") -> Dict[str, Any]:
+    """
+    将 LLM 或 stub 产生的 pattern 封装为候选模板字典。
 
-def _mk_candidate(pattern: str, sample_log: str, semantic_info: str = "", advise: str = "", source: str = "委员会") -> Dict[str, Any]:
-    return dict(pattern=pattern, sample_log=sample_log, semantic_info=semantic_info, advise=advise, source=source)
+    约定：
+    - pattern 中保留 NUMNUM 占位符，不在本阶段展开为数字正则；
+    - pattern_nomal 与 pattern 相同，作为归一化后的模板字符串：
+      * 用于 REGEX_TEMPLATE.pattern_nomal 字段
+      * 用于后续按 pattern_nomal 维度去重
+    真正的数字正则替换在 DAO 层统一处理。
+    """
+    pattern = pattern or ""
+    return dict(
+        pattern=pattern,
+        pattern_nomal=pattern,
+        sample_log=sample_log,
+        semantic_info=semantic_info,
+        advise=advise,
+        source=source,
+    )
 
 
 def _read_application_yaml() -> Dict[str, Any]:
@@ -165,27 +187,27 @@ def _build_langchain_llm(model_cfg: Dict[str, Any], secrets: Dict[str, Any]):
 
 # ------------------------------ 带“会话内容”记录的 LLM 代理 ------------------------------
     # msg 可能是 AIMessage，也可能是 str，简单兼容一下
-    from langchain_core.messages import AIMessage
-    if isinstance(msg, AIMessage):
-        text = msg.content
-    else:
-        text = msg
+    # from langchain_core.messages import AIMessage
+    # if isinstance(msg, AIMessage):
+    #     text = msg.content
+    # else:
+    #     text = msg
 
-    # content 可能是 str 或 list[dict/...]
-    if isinstance(text, list):
-        parts = []
-        for p in text:
-            if isinstance(p, dict) and "text" in p:
-                parts.append(p["text"])
-            else:
-                parts.append(str(p))
-        text = "".join(parts)
-    else:
-        text = str(text)
+    # # content 可能是 str 或 list[dict/...]
+    # if isinstance(text, list):
+    #     parts = []
+    #     for p in text:
+    #         if isinstance(p, dict) and "text" in p:
+    #             parts.append(p["text"])
+    #         else:
+    #             parts.append(str(p))
+    #     text = "".join(parts)
+    # else:
+    #     text = str(text)
 
-    # 去掉前缀的 <think> ... </think>
-    clean = re.sub(r"^<think>[\s\S]*?</think>\s*", "", text).strip()
-    return json.loads(clean)
+    # # 去掉前缀的 <think> ... </think>
+    # clean = re.sub(r"^<think>[\s\S]*?</think>\s*", "", text).strip()
+    # return json.loads(clean)
 
 def _parse_json_after_think(msg: Any):
     """
@@ -333,7 +355,7 @@ def _lc_draft(llm, cluster_samples: List[str], trace=None) -> List[Dict[str, Any
         "  - advise：仅对明显“错误/异常类”日志给出简短处理建议；其他情况可以是空字符串。\n"
         "\n"
         "重要约束：\n"
-        "1. 请先在心里按“语义相近”对日志样本进行分组，然后为每一组生成 1~N 条 pattern。\n"
+        "1. 请先在心里按“语义相近”对日志样本进行分组，然后为每一组生成 1 条 pattern。\n"
         "2. 确保【所有输入样本】都至少能被你返回的某一条 pattern 匹配到，不能遗漏任何一条日志。\n"
         "3. pattern 的数量应当不大于样本行数，避免一行样本生成多个几乎一样的模式。\n"
         "4. 文本中出现的 'NUMNUM' 是【占位符保留标记】，在 pattern 中必须原样保留：\n"
@@ -341,7 +363,8 @@ def _lc_draft(llm, cluster_samples: List[str], trace=None) -> List[Dict[str, Any
         "   - 不要对 'NUMNUM' 做额外转义或改动；\n"
         "   - 只对真正的数字或时间戳等做适度正则化（例如用 '\\d+'）。\n"
         "5. 复杂且高度重复、有明显规律的日志，请提取关键字段进行归纳，不要机械地为每一条都生成一条几乎相同的正则。\n"
-        "6. 只允许输出 JSON 数组本体 不要格式化，只要压缩的json字符串：\n"
+        "6. MOTP PRED ID ts NUMNUM NUMNUM,NUMNUM,NUMNUM,NUMNUM,NUMNUM,NUMNUM,NUMNUM,NUMNUM 此类型日志不要机械的尝试指定个数^MOTP PRED ID ts NUMNUM NUMNUM(?:,NUMNUM){6,7}$  而要生成可以变化的个数的pattern 比如1个以上，例如^MOTP PRED ID ts NUMNUM NUMNUM(?:,NUMNUM){1,}$\n"
+        "7. 只允许输出 JSON 数组本体 不要格式化，只要压缩的json字符串：\n"
         "   - 不能输出 ```json 这样的代码块标记；\n"
         "   - 不能在 JSON 前后添加说明文字、注释或其他自然语言。\n"
         "   - 不要输出和返回思考过程\n"

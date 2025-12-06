@@ -8,10 +8,10 @@ class Indexer:
         self._lock = threading.RLock()
         self._active = None  # type: ignore
     numeric_pattern = r'[-+]?(?:\d+\.\d*|\.\d+|\d+)'
-    def load_initial(self):
-        items = [{"template_id": r["template_id"], "pattern": r["pattern"]} for r in dao.fetch_all_templates(True)]
+    def load_initial(self,nomal=True):
+        items = [{"template_id": r["template_id"], "pattern_nomal": r["pattern_nomal"], "pattern": r["pattern"]} for r in dao.fetch_all_templates(True)]
         with self._lock:
-            self._active = CompiledIndex(items)
+            self._active = CompiledIndex(items,nomal=nomal)
 
     def get_active(self) -> CompiledIndex:
         with self._lock:
@@ -19,7 +19,7 @@ class Indexer:
 
     def build_new_index_async(self):
         def _worker():
-            items = [{"template_id": r["template_id"], "pattern": r["pattern"]} for r in dao.fetch_all_templates(True)]
+            items = [{"template_id": r["template_id"], "pattern_nomal": r["pattern_nomal"], "pattern": r["pattern"]} for r in dao.fetch_all_templates(True)]
             new_idx = CompiledIndex(items)
             self.atomic_switch(new_idx)
         t = threading.Thread(target=_worker, daemon=True)
@@ -27,7 +27,7 @@ class Indexer:
 
     # 新增: 同步重建索引, 供同步版 P1 在写入新模板后立即生效
     def build_new_index_sync(self):
-        items = [{"template_id": r["template_id"], "pattern": r["pattern"]} for r in dao.fetch_all_templates(True)]
+        items = [{"template_id": r["template_id"], "pattern_nomal": r["pattern_nomal"], "pattern": r["pattern"]} for r in dao.fetch_all_templates(True)]
         new_idx = CompiledIndex(items)
         self.atomic_switch(new_idx)
 

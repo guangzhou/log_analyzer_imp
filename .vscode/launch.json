@@ -34,9 +34,9 @@
       "request": "launch",
       "module": "bin.p2_run_second_pass",
       "args": [
-        "--path", "test.gz", 
-        "--normal-in", "test.normal.txt", 
-        "--file-id", "auto"
+        "--path", "t7.gz", 
+        "--normal-in", "t7.normal.txt", 
+        "--normal", "t7.normal.txt"
       ],
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
@@ -65,7 +65,7 @@
       "request": "launch",
       "module": "bin.p1_run_first_pass",
       "args": [
-        "--path", "test.gz",
+        "--path", "t7.gz",
         "--size-threshold", "15",
         "--micro-batch", "30",
         "--max-per-micro-batch", "30",

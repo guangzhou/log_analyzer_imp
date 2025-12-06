@@ -13,8 +13,11 @@ _LEADING_BRACKETS = re.compile(r'^(?:\[[^\]\n]*\]\s*)+')
 # pattern =r'(?<![a-zA-Z])-?(?:\d+(?:\.\d*)?|\.\d+)\b'
 # pattern = r'(?<![a-zA-Z])-?(?:\d+(?:\.\d*)?|\.\d+)\b'
 # pattern = r'(?<![a-zA-Z])-?(?:\d+(?:\.\d*)?|\.\d+)\b'
-num_pattern = r'(?<![a-zA-Z])-?(?:\d+(?:\.\d*)?|\.\d+)'
+# num_pattern = r'(?<![a-zA-Z])-?(?:\d+(?:\.\d*)?|\.\d+)'
 # pattern = r'(?<![a-zA-Z0-9])-?(?:\d+(?:\.\d*)?|\.\d+)'
+
+NUM_PLACEHOLDER = "NUMNUM"
+NUM_PATTERN = r'(?<![a-zA-Z])-?(?:\d+(?:\.\d*)?|\.\d+)'
 
 
 def extract_key_text(line: str) -> str:
@@ -27,7 +30,9 @@ def extract_key_text(line: str) -> str:
     # 去除行首连续中括号段
     s = _LEADING_BRACKETS.sub('', line)
     ##归一化数字
-    s = re.sub(num_pattern, 'NUMNUM',  s)
+    # 归一化数字 -> NUMNUM 占位符
+    s = re.sub(NUM_PATTERN, NUM_PLACEHOLDER, s)
+
     # 收尾空白
     s = s.strip()
     return s

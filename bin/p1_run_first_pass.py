@@ -179,7 +179,22 @@ def main():
         # 将 run_id 与 file_id 传入, 供委员会在 trace_conversations 开启时记录“会话内容”
         cands = committee.run(samples, model=committee_backend, phase=phase, config_path=agents_cfg_path,
                               run_context={"file_id": file_id, "run_id": run_id})
+        cands = committee.run(
+            samples,
+            model=committee_backend,
+            phase=phase,
+            config_path=agents_cfg_path,
+            run_context={"file_id": file_id, "run_id": run_id},
+        ) 
         if cands:
+            seen = set()
+            deduped = []
+            for c in cands:
+                pnorm = (c.get("pattern_nomal") or c.get("pattern") or "").strip()
+                if not pnorm or pnorm in seen:
+                    continue
+                seen.add(pnorm)
+                deduped.append(c)
             templates.write_candidates(cands)
             # 同步重建索引并切换, 让新规则立刻生效
             idx.build_new_index_sync()
@@ -187,7 +202,20 @@ def main():
     for i, batch in enumerate(micro_batches, 1):
         objs = [_KeyTextObj(k) for k in batch]
 
-        results = matcher.match_batch(idx.get_active(), objs, workers=match_workers)
+        results = matcher.match_batch(idx.get_active(), objs, workers=match_workers,nomal=True)
+        misses = [r.key_text for r in results if not getattr(r, "is_hit", False)]
+
+        if misses:
+            picked = dbuf.pick_for_buffer(misses)
+            dbuf.add(picked)
+
+        # 阈值触发 同步 LLM
+        if dbuf.reached_threshold():
+            samples = dbuf.snapshot_and_lock()
+            try:
+                _run_llm_sync(samples)
+            finally:
+                dbuf.clear_locked_batch()
         misses = [r.key_text for r in results if not getattr(r, "is_hit", False)]
 
         if misses:
