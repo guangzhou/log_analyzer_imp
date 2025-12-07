@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS submodule (
 CREATE TABLE IF NOT EXISTS regex_template (
   template_id INTEGER PRIMARY KEY AUTOINCREMENT,
   pattern TEXT NOT NULL,
-  pattern_nomal TEXT NOT NULL,
+  pattern_nomal TEXT NOT NULL UNIQUE, -- 这里添加UNIQUE约束
   sample_log TEXT,
   version INTEGER DEFAULT 1,
   is_active INTEGER DEFAULT 1,

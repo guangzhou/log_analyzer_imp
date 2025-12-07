@@ -166,6 +166,7 @@ def write_templates(cands: List[Dict[str, Any]]) -> List[int]:
                 INSERT INTO regex_template(pattern, pattern_nomal, sample_log, version, is_active,
                                            semantic_info, advise, created_at, updated_at, source)
                 VALUES(?, ?, ?, 1, 1, ?, ?, ?, ?, ?)
+                ON CONFLICT(pattern_nomal) DO NOTHING
             """,
                 (pattern_real, pattern_nomal, sample_log, semantic_info, advise, now, now, source),
             )
@@ -173,13 +174,14 @@ def write_templates(cands: List[Dict[str, Any]]) -> List[int]:
             ids.append(tid)
 
             # 历史表：保留真实 pattern，后续如需要也可以扩展 pattern_nomal 字段
-            conn.execute(
-                """
-                INSERT INTO template_history(template_id, pattern, sample_log, version, created_at, source, note)
-                VALUES(?, ?, ?, 1, ?, ?, ?)
-            """,
-                (tid, pattern_real, sample_log, now, source, "首次创建"),
-            )
+            # conn.execute(
+            #     """
+            #     INSERT INTO template_history(template_id, pattern, sample_log, version, created_at, source, note)
+            #     VALUES(?, ?, ?, 1, ?, ?, ?)
+            #     ON CONFLICT(pattern_nomal) DO NOTHING
+            # """,
+            #     (tid, pattern_real, sample_log, now, source, "首次创建"),
+            # )
         conn.commit()
     return ids
 

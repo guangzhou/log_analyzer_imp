@@ -120,7 +120,7 @@ def main():
 
     chunk_lines = args.chunk_lines or fp.get("read_chunk_lines", 5000)
     micro_batch = args.micro_batch or fp.get("micro_batch_size", 15)
-    match_workers = args.match_workers or fp.get("match_workers_per_batch", 4)
+    match_workers = args.match_workers or fp.get("match_workers_per_batch", 1)
     size_threshold = args.size_threshold or bufcfg.get("size_threshold", 100)
     max_per_mb = args.max_per_micro_batch or bufcfg.get("max_per_micro_batch", 15)
 
