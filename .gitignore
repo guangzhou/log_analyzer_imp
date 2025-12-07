@@ -17,3 +17,5 @@ wheels/
 *secrets*
 *sqlite3*
 *trace.jsonl
+*myapp.log*"
+myapp.log 
