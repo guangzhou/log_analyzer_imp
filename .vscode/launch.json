@@ -65,7 +65,7 @@
       "request": "launch",
       "module": "bin.p1_run_first_pass",
       "args": [
-        "--path", "t1.gz",
+        "--path", "test.gz",
         "--size-threshold", "15",
         "--micro-batch", "30",
         "--max-per-micro-batch", "30",

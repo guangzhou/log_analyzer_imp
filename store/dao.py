@@ -294,6 +294,30 @@ def get_template_samples(limit: int = 200) -> List[str]:
         return [r["sample_log"] for r in cur.fetchall()]
 
 
+def deactivate_template(template_id: int) -> bool:
+    """
+    软删除模板：将指定 template_id 的 is_active 设为 0
+    
+    Args:
+        template_id: 要停用的模板ID
+        
+    Returns:
+        bool: 成功返回 True，模板不存在或已停用返回 False
+    """
+    try:
+        with _connect() as conn:
+            cur = conn.execute(
+                "UPDATE regex_template SET is_active = 0, updated_at = ? WHERE template_id = ? AND is_active = 1",
+                (datetime.utcnow().isoformat(), template_id)
+            )
+            conn.commit()
+            return cur.rowcount > 0
+    except Exception as e:
+        # 记录错误但不抛出异常，避免影响主流程
+        print(f"Error deactivating template {template_id}: {e}")
+        return False
+
+
 def _cli():
     parser = argparse.ArgumentParser(description="log_analyzer 数据库工具")
     parser.add_argument("--db", default=DEFAULT_DB, help="数据库文件路径")

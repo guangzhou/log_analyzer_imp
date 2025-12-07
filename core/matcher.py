@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, NamedTuple, Optional, Any
 import logging
 from core.utils.logger import get_logger 
+from store.dao import deactivate_template
 logger = get_logger("myapp", level=logging.DEBUG, rotate="day")   
 class MatchResult(NamedTuple):
 
@@ -28,8 +29,21 @@ class CompiledIndex:
                     compiled_pattern = re.compile(it[pattern_key]) 
                     self.items.append((it["template_id"],pattern_key , compiled_pattern)) 
                 except re.error as e:
-                    # 记录编译失败的 pattern，但继续处理其他项
-                    logger.error(f"Warning: Failed to compile pattern '{it[pattern_key]}' for template_id {it.get('template_id')}: {e}")
+                    # 记录编译失败的 pattern，并从数据库删除对应的模板记录
+                    template_id = it.get('template_id')
+                    logger.error(f"Warning: Failed to compile pattern '{it[pattern_key]}' for template_id {template_id}: {e}")
+                    
+                    # 尝试从数据库删除对应的模板记录
+                    if template_id is not None:
+                        try:
+                            success = deactivate_template(template_id)
+                            if success:
+                                logger.info(f"Successfully deactivated template_id {template_id} due to pattern compilation failure")
+                            else:
+                                logger.warning(f"Failed to deactivate template_id {template_id} - template may not exist or already inactive")
+                        except Exception as db_error:
+                            logger.error(f"Database error when deactivating template_id {template_id}: {db_error}")
+                    
                     continue
 
     def match_one(self, text: str) -> Optional[int]:
