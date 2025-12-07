@@ -34,13 +34,18 @@
       "request": "launch",
       "module": "bin.p2_run_second_pass",
       "args": [
-        "--path", "test.gz", 
-        "--normal-in", "test.normal.txt", 
-        "--normal", "test.normal.txt"
+        "--path", "t1.gz", 
+        "--normal-in", "48009", 
+        "--chunk-lines", "300", 
+        "--micro-batch", "50", 
+        "--match-workers", "1", 
+        "--normal", "t1.normal.txt"
       ],
+      "subProcess": true,
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
       "justMyCode": true
+
     },
     {
       "name": "Run p1_run_first_pass (with await-llm)",
@@ -65,7 +70,7 @@
       "request": "launch",
       "module": "bin.p1_run_first_pass",
       "args": [
-        "--path", "test.gz",
+        "--path", "log2.gz",
         "--size-threshold", "15",
         "--micro-batch", "30",
         "--max-per-micro-batch", "30",

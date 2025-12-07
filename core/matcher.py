@@ -68,3 +68,18 @@ def match_batch(index_handle: CompiledIndex, parsed_batch: List[Any], workers: i
                 i, res = fu.result()
                 outs[i] = res
         return outs
+
+def match_batch_copy(index_handle: CompiledIndex, parsed_batch: List[Any], workers: int = 4, nomal=True) -> List[MatchResult]:
+        """
+        单线程版本的 match_batch，用于调试性能问题
+        """
+        outs: List[MatchResult] = [None] * len(parsed_batch)  # type: ignore
+        
+        for i, p in enumerate(parsed_batch):
+            tid = index_handle.match_one(p.key_text)
+            if tid is None:
+                outs[i] = MatchResult(False, None, None, None, p, p.key_text)
+            else:
+                outs[i] = MatchResult(True, tid, None, None, p, p.key_text)
+                
+        return outs

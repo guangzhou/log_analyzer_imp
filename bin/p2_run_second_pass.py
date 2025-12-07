@@ -16,7 +16,9 @@ from typing import Dict, Any, List, Tuple
 from store import dao
 from core import reader, parser as parser_mod, matcher, indexer as indexer_mod
 from core.utils.config import load_yaml
-
+import logging
+from core.utils.logger import get_logger  
+logger = get_logger("myapp", level=logging.DEBUG, rotate="day")   
 
 def _derive_normal_path(path: str, override: str = None) -> str:
     """
@@ -100,7 +102,8 @@ def _update_summary(
             smod=smod,
             classification=classification,
             level=level,
-            thread_id=thread_id,
+            # thread_id=thread_id,
+            thread_id=0,
             first_ts=ts,
             last_ts=ts,
             line_count=1,
@@ -177,13 +180,18 @@ def main() -> None:
     for chunk in reader.read_in_chunks(normal_path, chunk_lines=chunk_lines):
         for line in chunk:
             total_lines += 1
+            # 减少日志频率：每 1000 行记录一次 
+            logger.info(f"processed_lines: {total_lines}, matched_lines: {matched_total}")
+            line = line.strip()
+            if not line:
+                continue
             parsed = parser_mod.parse_fields(line)
             if parsed is None:
                 continue
             buffer.append(parsed)
             if len(buffer) >= micro_batch:
                 # 批量匹配
-                results = matcher.match_batch(
+                results = matcher.match_batch_copy(
                     idx.get_active(),
                     buffer,
                     workers=match_workers,
@@ -201,11 +209,14 @@ def main() -> None:
                     except Exception:
                         continue
                     matched_total += 1
+                    
+            # 减少日志频率：每 1000 行记录一次 
+                    logger.info(f"processed_lines: {total_lines}, matched_lines: {matched_total}")
                     _update_summary(summary, file_id, run_id, tid, parsed_line)
                 buffer.clear()
 
     if buffer:
-        results = matcher.match_batch(
+        results = matcher.match_batch_copy(
             idx.get_active(),
             buffer,
             workers=match_workers,
