@@ -90,8 +90,8 @@ def _update_summary(
     ts = (parsed.ts or "").strip()
     classification = ""  # 目前不从模板库回填分类，保持为空串
 
-    key = (template_id, mod, smod, classification, level, thread_id)
-
+    # key = (template_id, mod, smod, classification, level, thread_id)
+    key = (template_id, mod, smod, classification, level, 0)
     row = summary.get(key)
     if row is None:
         summary[key] = dict(
@@ -191,7 +191,7 @@ def main() -> None:
             buffer.append(parsed)
             if len(buffer) >= micro_batch:
                 # 批量匹配
-                results = matcher.match_batch_copy(
+                results = matcher.match_batch(
                     idx.get_active(),
                     buffer,
                     workers=match_workers,
@@ -216,7 +216,7 @@ def main() -> None:
                 buffer.clear()
 
     if buffer:
-        results = matcher.match_batch_copy(
+        results = matcher.match_batch(
             idx.get_active(),
             buffer,
             workers=match_workers,
