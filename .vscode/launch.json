@@ -34,8 +34,7 @@
       "request": "launch",
       "module": "bin.p2_run_second_pass",
       "args": [
-        "--path", "t1.gz", 
-        "--normal-in", "48009", 
+        "--path", "log2.gz",  
         "--chunk-lines", "300", 
         "--micro-batch", "50", 
         "--match-workers", "1", 
