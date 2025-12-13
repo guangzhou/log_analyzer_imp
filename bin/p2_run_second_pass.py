@@ -180,8 +180,9 @@ def main() -> None:
     for chunk in reader.read_in_chunks(normal_path, chunk_lines=chunk_lines):
         for line in chunk:
             total_lines += 1
+           
             # 减少日志频率：每 1000 行记录一次 
-            logger.info(f"processed_lines: {total_lines}, matched_lines: {matched_total}")
+            # logger.info(f"processed_lines: {total_lines}, matched_lines: {matched_total}")
             line = line.strip()
             if not line:
                 continue
@@ -189,6 +190,8 @@ def main() -> None:
             if parsed is None:
                 continue
             buffer.append(parsed)
+            # if total_lines >19000:
+            #     logger.info(line)
             if len(buffer) >= micro_batch:
                 # 批量匹配
                 results = matcher.match_batch(
@@ -209,12 +212,11 @@ def main() -> None:
                     except Exception:
                         continue
                     matched_total += 1
-                    
-            # 减少日志频率：每 1000 行记录一次 
-                    logger.info(f"processed_lines: {total_lines}, matched_lines: {matched_total}")
+                     
+                    # logger.info(f"processed_lines: {total_lines}, matched_lines: {matched_total}")
                     _update_summary(summary, file_id, run_id, tid, parsed_line)
                 buffer.clear()
-
+        logger.info(f"processed_lines: {total_lines}, matched_lines: {matched_total}")
     if buffer:
         results = matcher.match_batch(
             idx.get_active(),

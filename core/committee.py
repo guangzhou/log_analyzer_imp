@@ -343,49 +343,56 @@ def _lc_draft(llm, cluster_samples: List[str], trace=None) -> List[Dict[str, Any
     from langchain_core.runnables import RunnableLambda
 
     system_text = (
-        "你是一个自动驾驶系统问题分析专家，负责对报错/日志进行语义归类并抽取正则模板。\n"
-        "\n"
-        "【输入】\n"
-        "- 你会收到一个 JSON 数组字符串，其中每个元素是一条完整的日志（可能很长）。\n"
-        "- 请根据这些日志，归纳出若干条【泛化良好】的正则表达式模板。\n"
-        "\n"
-        "【输出】\n"
-        "- 必须返回一个 JSON 数组（最外层就是数组），数组中的每个元素是一个对象，字段要求：\n"
-        "  - pattern: 针对一类日志的正则表达式，简洁且可泛化，避免只贴某一条样本；\n"
-        "  - sample_log: 从输入日志中挑选一条最能代表该 pattern 的原始日志；\n"
-        "  - semantic_info: 用一句中文概括这一类日志的含义；\n"
-        "  - advise: 仅对明确“错误/异常类”日志给出简短处理建议；其他情况可以是空字符串 \"\"；\n"
-        "  - 可选字段: category，如果你觉得有必要，可以用来做简单的语义标签。\n"
-        "\n"
-        "【分组与覆盖要求】\n"
-        "1. 请先在心里按“语义相近”对日志样本进行分组，然后为每一组生成 1 条 pattern。\n"
-        "2. 确保【所有输入样本】都至少能被你返回的某一条 pattern 匹配到，不能遗漏任何一条日志。\n"
-        "3. pattern 的数量不得大于样本行数，避免为同一条样本生成多个几乎相同的模式。\n"
-        "4. 对结构高度重复、规律明显的日志，要提取稳定字段进行归纳，而不是机械地给每一行都生成独立 pattern。\n"
-        "\n"
-        "【关于 NUMNUM 占位符】\n"
-        "5. 文本中的 \"NUMNUM\" 是【占位符保留标记】，在 pattern 中必须原样保留：\n"
-        "   - 不要把 \"NUMNUM\" 改写为 \\\\d+ 或其他形式；\n"
-        "   - 不要对 \"NUMNUM\" 做额外转义或改写；\n"
-        "   - 只对真正的数字、时间戳等做适度正则化（例如用 \\\\d+ 代替具体数字）。\n"
-        "6. 对类似 \"MOTP PRED ID ts NUMNUM NUMNUM,NUMNUM,NUMNUM,...\" 这类包含多个连续 NUMNUM 的日志，\n"
-        "   需要写出可以匹配“一个或多个 NUMNUM”的 pattern\n"
-        "   而不是死写固定个数（例如必须 12 个 NUMNUM）。\n"
-        "\n"
-        "【避免过度泛化】\n"
-        "7. 对于类似 \"valid_goal_point_num : NUMNUM\" 的日志，pattern 中要保留关键单词，\n"
-        "   如 \"^valid_goal_point_num : NUMNUM$\"；不要写成 \"^[A-Za-z_]+ : NUMNUM$\" 这种过度泛化、\n"
-        "   易匹配到很多无关日志的模式。\n"
-        "\n"
-        "8.避免出现这种明显问题的正则 导致匹配极慢（甚至可能触发灾难性回溯）'^\(ToPredictionOutput\)\[ID:(?: NUMNUM)+\] NO output MOT exists!$'"
-        "【输出格式硬性要求】\n"
-        "9. 只允许输出 JSON 数组本体，采用压缩/紧凑形式：\n"
-        "   - 最外层从 '[' 开始，以 ']' 结束；\n"
-        "   - 不要输出 ```json 或任何代码块标记；\n"
-        "   - 不要在 JSON 前后添加说明文字、注释或其他自然语言；\n"
-        "   - 不要输出你的思考或推理过程；\n"
-        "   - 不要输出 <think>、</think> 或任何类似标记。\n"
-    )
+            "你是一个自动驾驶系统问题分析专家，负责对报错/日志进行语义归类并抽取正则模板。\n"
+            "\n"
+            "【输入】\n"
+            "- 你会收到一个 JSON 数组字符串，其中每个元素是一条完整的日志（可能很长）。\n"
+            "- 请根据这些日志，归纳出若干条【泛化良好】的正则表达式模板。\n"
+            "\n"
+            "【输出】\n"
+            "- 必须返回一个 JSON 数组（最外层就是数组），数组中的每个元素是一个对象，字段要求：\n"
+            "  - pattern: 针对一类日志的正则表达式，简洁且可泛化，避免只贴某一条样本；\n"
+            "  - sample_log: 从输入日志中挑选一条最能代表该 pattern 的原始日志；\n"
+            "  - semantic_info: 用一句中文概括这一类日志的含义；\n"
+            "  - advise: 仅对明确‘错误/异常类’日志给出简短处理建议；其他情况可以是空字符串 \"\"；\n"
+            "  - 可选字段: category，如果你觉得有必要，可以用来做简单的语义标签。\n"
+            "\n"
+            "【分组与覆盖要求】\n"
+            "1. 请先在心里按‘语义相近’对日志样本进行分组，然后为每一组生成 1 条 pattern。\n"
+            "2. 确保【所有输入样本】都至少能被你返回的某一条 pattern 匹配到，不能遗漏任何一条日志。\n"
+            "3. pattern 的数量不得大于样本行数，避免为同一条样本生成多个几乎相同的模式。\n"
+            "4. 对结构高度重复、规律明显的日志，要提取稳定字段进行归纳，而不是机械地给每一行都生成独立 pattern。\n"
+            "\n"
+            "【关于 NUMNUM 占位符】\n"
+            "5. 文本中的 ‘NUMNUM’ 是【占位符保留标记】，在 pattern 中要么原样保留，要么作为普通的字符处理，"
+            "但是不要转成数字或者其他字符串：\n"
+            "   - 不要把 ‘NUMNUM’ 改写为 \\\\d+ 或其他形式；\n"
+            "   - 不要对 ‘NUMNUM’ 做额外转义或改写；\n"
+            "6. 对类似 ‘MOTP PRED ID ts NUMNUM NUMNUM,NUMNUM,NUMNUM,...’ 这类包含多个连续 NUMNUM 的日志，\n"
+            "   可以直接用 ‘^MOTP PRED ID ts’ 不要尝试查找多少个。\n"
+            "   而不是死写固定个数（例如必须 12 个 NUMNUM）， 同样各种复杂嵌套的也可以用这个思路。\n"
+            "\n"
+            "【避免过度泛化】\n"
+            "7. 对于类似 ‘valid_goal_point_num : NUMNUM’ 的日志，pattern 中要保留关键单词，\n"
+            "   如 ‘^valid_goal_point_num : NUMNUM$’；不要写成 ‘^[A-Za-z_]+ : NUMNUM$’ 这种过度泛化、\n"
+            "   易匹配到很多无关日志的模式。\n"
+            "\n"
+            "【性能与灾难性回溯规避】\n"
+            "8. 避免出现明显问题的正则导致匹配极慢（甚至可能触发灾难性回溯）尤其是某些写法和输入组合可能出现灾难性回溯一定要避免和检查：\n"
+            "   - 避免类似 ‘(?:/\\\\w+)* + \\\\w+(?:_...)+’ 的嵌套量词组合（经典回溯炸弹温床）；\n"
+            "   - 避免类似 ‘^\\(ToPredictionOutput\\)\\[ID:(?: NUMNUM)+\\] NO output MOT exists!$’ 这类可疑重复结构；\n"
+            "   - 优先使用稳定前缀、必要的锚点与轻量可选段。\n"
+            "\n"
+            "【输出格式硬性要求】\n"
+            "9. 只允许输出 JSON 数组本体，采用压缩/紧凑形式：\n"
+            "   - 最外层从 '[' 开始，以 ']' 结束；\n"
+            "   - 不要输出 ```json 或任何代码块标记；\n"
+            "   - 不要在 JSON 前后添加说明文字、注释或其他自然语言；\n"
+            "   - 不要输出你的思考或推理过程；\n"
+            "   - 不要输出 <think>、</think> 或任何类似标记。\n"
+        )
+
+ 
     # 使用双花括号展示示例（避免被当作模板变量）
     example_text = (
     '示例（仅供参考，不要死记示例里的正则）：\n'
@@ -401,8 +408,8 @@ def _lc_draft(llm, cluster_samples: List[str], trace=None) -> List[Dict[str, Any
     '\n'
     '示例输出 JSON 数组（压缩形式，注意这里是 JSON 数组本身，不是被引号包裹的字符串）：\n'
     '[{{"pattern":"^Auto gen vx graph\\\\(.*\\\\) failed$","sample_log":"Auto gen vx graph(DAADBevDetTemporal6v) failed","semantic_info":"VX 图生成失败","advise":"检查图生成流程中的参数配置与系统资源"}},'
-    '{{"pattern":"^seletct_mot_id: (?:NUMNUM)(?: NUMNUM)*$","sample_log":"seletct_mot_id: NUMNUM NUMNUM","semantic_info":"模块选出的 MOT 目标 ID 列表","advise":""}},'
-    '{{"pattern":"^front side mots: .*$","sample_log":"front side mots: [(NUMNUM, NUMNUM), ], [(NUMNUM, NUMNUM), ], [(NUMNUM, NUMNUM), ]","semantic_info":"车前方区域的 MOT 跟踪目标列表","advise":""}}]\n'
+    '{{"pattern":"^seletct_mot_id","sample_log":"seletct_mot_id: NUMNUM NUMNUM","semantic_info":"模块选出的 MOT 目标 ID 列表","advise":""}},'
+    '{{"pattern":"^front side mots","sample_log":"front side mots: [(NUMNUM, NUMNUM), ], [(NUMNUM, NUMNUM), ], [(NUMNUM, NUMNUM), ]","semantic_info":"车前方区域的 MOT 跟踪目标列表","advise":""}}]\n'
     )
 
     prompt = ChatPromptTemplate.from_messages([

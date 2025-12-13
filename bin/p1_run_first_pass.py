@@ -18,6 +18,9 @@ from store import dao
 from core import reader, preprocessor, parser as parser_mod, matcher, buffer as buffer_mod, indexer as indexer_mod, committee, templates
 from core.utils.config import load_yaml
 from core import keytext
+import logging
+from core.utils.logger import get_logger  
+logger = get_logger("myapp", level=logging.DEBUG, rotate="day")  
 
 # 清洗 ANSI 控制字符, 在生成 normal 之前统一处理
 try:
@@ -198,9 +201,14 @@ def main():
             templates.write_candidates(cands)
             # 同步重建索引并切换, 让新规则立刻生效
             idx.build_new_index_sync()
-
+    total_lines = 0
+    
     for i, batch in enumerate(micro_batches, 1):
         objs = [_KeyTextObj(k) for k in batch]
+        logger.info(f"[P1] {i}/{len(micro_batches)}: {len(objs)}") 
+        total_lines += len(objs)
+        logger.info(total_lines)
+        # 6) 批量匹配
 
         results = matcher.match_batch(idx.get_active(), objs, workers=match_workers,nomal=True)
         misses = [r.key_text for r in results if not getattr(r, "is_hit", False)]
