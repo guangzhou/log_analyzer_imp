@@ -139,10 +139,27 @@ def main() -> None:
     sp_cfg = _load_second_pass_cfg(app_cfg)
 
     chunk_lines = int(args.chunk_lines or sp_cfg["chunk_lines"])
+    user_defined_micro = args.micro_batch is not None
     micro_batch = int(args.micro_batch or sp_cfg["micro_batch"])
     match_workers = int(args.match_workers or sp_cfg["match_workers"])
     bucket_granularity = sp_cfg["bucket_granularity"]
     # agg_flush_lines = int(sp_cfg["agg_flush_lines"])  # 当前版本不使用时间桶，可按需开启
+    # 针对未显式指定 micro_batch 的情况，按 worker 数动态调整，减少调度开销
+    min_recommended_batch = max(match_workers * 200, 1000)
+    if micro_batch < min_recommended_batch:
+        if user_defined_micro:
+            logger.info(
+                "micro_batch=%d 低于推荐阈值 %d，可能导致线程开销偏大",
+                micro_batch,
+                min_recommended_batch,
+            )
+        else:
+            logger.info(
+                "自动放大 micro_batch: %d -> %d，以降低线程调度开销",
+                micro_batch,
+                min_recommended_batch,
+            )
+            micro_batch = min_recommended_batch
 
     path = args.path
     normal_path = args.normal_in or _derive_normal_path(path)
