@@ -34,11 +34,11 @@
       "request": "launch",
       "module": "bin.p2_run_second_pass",
       "args": [
-        "--path", "log2.gz",  
-        "--chunk-lines", "300", 
-        "--micro-batch", "50", 
-        "--match-workers", "1", 
-        "--normal", "t1.normal.txt"
+        "--path", "log.gz",  
+        "--chunk-lines", "3000", 
+        "--micro-batch", "500", 
+        "--match-workers", "3", 
+        "--normal", "log.normal.txt"
       ],
       "subProcess": true,
       "console": "integratedTerminal",
@@ -69,7 +69,7 @@
       "request": "launch",
       "module": "bin.p1_run_first_pass",
       "args": [
-        "--path", "log2.gz",
+        "--path", "log.gz",
         "--size-threshold", "15",
         "--micro-batch", "30",
         "--max-per-micro-batch", "30",

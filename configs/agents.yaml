@@ -20,7 +20,7 @@ committee:
         provider: "openai"
         api_key_ref: "secrets.qwen.api_key"   # 从 secrets.yaml 读取
         base_url_ref: "secrets.qwen.base_url" # 可选 若不填则用 base_url 字段
-        model_name: "glm-4.6"
+        model_name: "qwen-plus-latest"
         temperature: 0.0
         timeout_s: 600
         auth_scheme: "Bearer"
@@ -30,7 +30,7 @@ committee:
         provider: "openai"
         api_key_ref: "secrets.qwen.api_key"
         base_url_ref: "secrets.qwen.base_url"
-        model_name: "glm-4.6"
+        model_name: "qwen-plus-latest"
         temperature: 0.0
         timeout_s: 600
         auth_scheme: "Bearer"
@@ -42,7 +42,7 @@ committee:
         provider: "openai"
         api_key_ref: "secrets.qwen.api_key"
         base_url_ref: "secrets.qwen.base_url"
-        model_name: "glm-4.6"
+        model_name: "qwen-plus-latest"
         temperature: 0.2
         timeout_s: 600
         auth_scheme: "Bearer"
@@ -52,7 +52,7 @@ committee:
         provider: "openai"
         api_key_ref: "secrets.qwen.api_key"
         base_url_ref: "secrets.qwen.base_url"
-        model_name: "glm-4.6"
+        model_name: "qwen-plus-latest"
         temperature: 0.0
         timeout_s: 600
         auth_scheme: "Bearer"
@@ -63,7 +63,7 @@ committee:
         provider: "openai"
         api_key_ref: "secrets.qwen.api_key"
         base_url_ref: "secrets.qwen.base_url"
-        model_name: "glm-4.6"
+        model_name: "qwen-plus-latest"
         temperature: 0.0
         timeout_s: 600
         auth_scheme: "Bearer"
@@ -73,7 +73,7 @@ committee:
         provider: "openai"
         api_key_ref: "secrets.qwen.api_key"
         base_url_ref: "secrets.qwen.base_url"
-        model_name: "glm-4.6"
+        model_name: "qwen-plus-latest"
         temperature: 0.0
         timeout_s: 600
         auth_scheme: "Bearer"

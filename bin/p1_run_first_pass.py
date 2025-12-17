@@ -200,6 +200,8 @@ def main():
                 deduped.append(c)
             templates.write_candidates(cands)
             # 同步重建索引并切换, 让新规则立刻生效
+            for cand in cands:
+                logger.debug(f"{cand.get('pattern_nomal')}~~~{cand.get('semantic_info')}~~{cand.get('sample_log')}" )
             idx.build_new_index_sync()
     total_lines = 0
     
@@ -221,6 +223,8 @@ def main():
         if dbuf.reached_threshold():
             samples = dbuf.snapshot_and_lock()
             try:
+                for r in samples:
+                    logger.debug(r)
                 _run_llm_sync(samples)
             finally:
                 dbuf.clear_locked_batch()
