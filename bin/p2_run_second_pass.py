@@ -153,6 +153,8 @@ def main() -> None:
     # 与第一遍保持一致的 file_id
     file_id = _calc_file_id(path)
     dao.register_file(file_id, path)
+    # rerun 前先清理旧的统计，避免重复写入
+    dao.delete_log_match_summary_by_file(file_id)
 
     # 记录第二遍 run_session
     run_id = dao.create_run_session(

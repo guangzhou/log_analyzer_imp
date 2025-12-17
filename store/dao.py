@@ -238,6 +238,20 @@ def batch_upsert_log_match_summary(rows: List[Dict[str, Any]]):
                 ),
             )
         conn.commit()
+
+
+def delete_log_match_summary_by_file(file_id: str) -> None:
+    """
+    清空指定 file_id 之前的 log_match_summary 记录，避免重复统计。
+    """
+    if not file_id:
+        return
+    with _connect() as conn:
+        conn.execute(
+            "DELETE FROM log_match_summary WHERE file_id=?",
+            (file_id,),
+        )
+        conn.commit()
 def batch_upsert_key_time_bucket(rows: List[Dict[str, Any]]):
     if not rows:
         return
