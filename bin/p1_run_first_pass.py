@@ -11,7 +11,8 @@
 4) 新增: 将 run_id 与 file_id 通过 run_context 传入委员会, 便于按需记录“会话内容”
 """
 import os, argparse, sys
-from typing import List
+import re
+from typing import List, Dict, Any
 
 # 现有依赖
 from store import dao
@@ -70,14 +71,64 @@ def write_normal_file(path: str, out_path: str, chunk_lines: int = 10000) -> int
     return total
 
 
+_LEADING_BRACKETS = re.compile(r'^(?:\[[^\]\n]*\]\s*)+')
+
+
+def _extract_original_key_text(line: str) -> str:
+    if not line:
+        return ""
+    s = _LEADING_BRACKETS.sub('', line)
+    return s.strip()
+
+
+def _safe_field(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).replace("\t", " ")
+
+
 def build_uniq_files(normal_path: str, chunk_lines: int = 10000) -> tuple:
     """从 xx.normal.txt 抽取关键文本, 排序去重并计数, 产出 xx_uniq.txt 与 xx_uniq_with_count.tsv"""
     uniq_txt, uniq_tsv = _derive_uniq_paths(normal_path)
 
-    counter = {}
+    counter: Dict[str, Dict[str, Any]] = {}
     for chunk in reader.read_in_chunks(normal_path, chunk_lines=chunk_lines):
-        for kt in keytext.iter_key_texts(chunk):
-            counter[kt] = counter.get(kt, 0) + 1
+        for line in chunk:
+            if not line:
+                continue
+            key_text = keytext.extract_key_text(line)
+            if not key_text:
+                continue
+            parsed = parser_mod.parse_fields(line)
+            mod = parsed.mod if parsed else ""
+            smod = parsed.smod if parsed else ""
+            ts = parsed.ts if parsed else ""
+            sample_original = parsed.key_text if parsed else _extract_original_key_text(line)
+
+            info = counter.get(key_text)
+            if info is None:
+                info = {
+                    "count": 0,
+                    "mod": mod,
+                    "smod": smod,
+                    "min_ts": ts or "",
+                    "max_ts": ts or "",
+                    "sample_log": key_text,
+                    "sample_log_orien": sample_original,
+                }
+                counter[key_text] = info
+            info["count"] += 1
+            if ts:
+                if not info["min_ts"] or ts < info["min_ts"]:
+                    info["min_ts"] = ts
+                if not info["max_ts"] or ts > info["max_ts"]:
+                    info["max_ts"] = ts
+            if not info["mod"] and mod:
+                info["mod"] = mod
+            if not info["smod"] and smod:
+                info["smod"] = smod
+            if not info["sample_log_orien"] and sample_original:
+                info["sample_log_orien"] = sample_original
 
     uniq_list = sorted(counter.keys())
     os.makedirs(os.path.dirname(uniq_txt) or ".", exist_ok=True)
@@ -88,9 +139,20 @@ def build_uniq_files(normal_path: str, chunk_lines: int = 10000) -> tuple:
 
     with open(uniq_tsv, "w", encoding="utf-8") as f2:
         for k in uniq_list:
-            f2.write(f"{counter[k]}\t{k}\n")
+            info = counter[k]
+            row = [
+                str(info["count"]),
+                _safe_field(k),
+                _safe_field(info.get("mod")),
+                _safe_field(info.get("smod")),
+                _safe_field(info.get("min_ts")),
+                _safe_field(info.get("max_ts")),
+                _safe_field(info.get("sample_log")),
+                _safe_field(info.get("sample_log_orien")),
+            ]
+            f2.write("\t".join(row) + "\n")
 
-    uniq_count = sum(counter.values())
+    uniq_count = sum(info["count"] for info in counter.values())
     uniq_distinct = len(uniq_list)
     return uniq_txt, uniq_tsv, uniq_count, uniq_distinct
 
