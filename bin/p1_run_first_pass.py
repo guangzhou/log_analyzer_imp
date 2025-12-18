@@ -103,6 +103,7 @@ def build_uniq_files(normal_path: str, chunk_lines: int = 10000) -> tuple:
             mod = parsed.mod if parsed else ""
             smod = parsed.smod if parsed else ""
             ts = parsed.ts if parsed else ""
+            level = parsed.level if parsed else ""
             sample_original = parsed.key_text if parsed else _extract_original_key_text(line)
 
             info = counter.get(key_text)
@@ -113,6 +114,7 @@ def build_uniq_files(normal_path: str, chunk_lines: int = 10000) -> tuple:
                     "smod": smod,
                     "min_ts": ts or "",
                     "max_ts": ts or "",
+                    "level": level or "",
                     "sample_log": key_text,
                     "sample_log_orien": sample_original,
                 }
@@ -127,6 +129,8 @@ def build_uniq_files(normal_path: str, chunk_lines: int = 10000) -> tuple:
                 info["mod"] = mod
             if not info["smod"] and smod:
                 info["smod"] = smod
+            if not info["level"] and level:
+                info["level"] = level
             if not info["sample_log_orien"] and sample_original:
                 info["sample_log_orien"] = sample_original
 
@@ -147,6 +151,7 @@ def build_uniq_files(normal_path: str, chunk_lines: int = 10000) -> tuple:
                 _safe_field(info.get("smod")),
                 _safe_field(info.get("min_ts")),
                 _safe_field(info.get("max_ts")),
+                _safe_field(info.get("level")),
                 _safe_field(info.get("sample_log")),
                 _safe_field(info.get("sample_log_orien")),
             ]
