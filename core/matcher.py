@@ -2,8 +2,10 @@
 import atexit
 import re
 import threading
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, NamedTuple, Optional, Any, Dict
+from functools import lru_cache
+from typing import List, NamedTuple, Optional, Any, Dict, Tuple
 import logging
 from core.utils.logger import get_logger 
 from store.dao import deactivate_template
@@ -24,38 +26,119 @@ class MatchResult(NamedTuple):
     parsed: Any  # ParsedLine
     key_text: str
 
+
 class CompiledIndex:
-    def __init__(self, items: List[dict],nomal=True):
-        self.items = []
+    def __init__(self, items: List[dict], nomal: bool = True, cache_size: int = 20000):
+        self.items: List[Tuple[int, str, re.Pattern]] = []
+        self.literal_bins: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
+        self.fallback_indices: List[int] = []
         pattern_key = "pattern_nomal" if nomal else "pattern"
         for it in items:
-            if it.get("pattern_nomal"):
-                try: 
-                    compiled_pattern = re.compile(it[pattern_key]) 
-                    self.items.append((it["template_id"],pattern_key , compiled_pattern)) 
-                except re.error as e:
-                    # 记录编译失败的 pattern，并从数据库删除对应的模板记录
-                    template_id = it.get('template_id')
-                    logger.error(f"Warning: Failed to compile pattern '{it[pattern_key]}' for template_id {template_id}: {e}")
-                    
-                    # 尝试从数据库删除对应的模板记录
-                    if template_id is not None:
-                        try:
-                            success = deactivate_template(template_id)
-                            if success:
-                                logger.info(f"Successfully deactivated template_id {template_id} due to pattern compilation failure")
-                            else:
-                                logger.warning(f"Failed to deactivate template_id {template_id} - template may not exist or already inactive")
-                        except Exception as db_error:
-                            logger.error(f"Database error when deactivating template_id {template_id}: {db_error}")
-                    
-                    continue
+            raw = it.get(pattern_key)
+            if not raw:
+                continue
+            try:
+                compiled_pattern = re.compile(raw)
+            except re.error as e:
+                template_id = it.get("template_id")
+                logger.error(
+                    "Warning: Failed to compile pattern '%s' for template_id %s: %s",
+                    raw,
+                    template_id,
+                    e,
+                )
+                if template_id is not None:
+                    try:
+                        success = deactivate_template(template_id)
+                        if success:
+                            logger.info(
+                                "Successfully deactivated template_id %s due to pattern compilation failure",
+                                template_id,
+                            )
+                        else:
+                            logger.warning(
+                                "Failed to deactivate template_id %s - template may not exist or already inactive",
+                                template_id,
+                            )
+                    except Exception as db_error:
+                        logger.error(
+                            "Database error when deactivating template_id %s: %s",
+                            template_id,
+                            db_error,
+                        )
+                continue
 
-    def match_one(self, text: str) -> Optional[int]:
-        for tid, pat, creg in self.items:
+            idx = len(self.items)
+            self.items.append((it["template_id"], pattern_key, compiled_pattern))
+            literal_hint = self._extract_literal_hint(raw)
+            if literal_hint:
+                self.literal_bins[literal_hint[0]].append((literal_hint, idx))
+            else:
+                self.fallback_indices.append(idx)
+
+        self._match_one_cached = lru_cache(maxsize=cache_size)(self._match_one_uncached)
+
+    @staticmethod
+    def _extract_literal_hint(pattern: str) -> Optional[str]:
+        """
+        粗略提取模式中长度>=4的连续字面量片段，用于快速过滤候选模板。
+        """
+        literals: List[str] = []
+        buf = []
+        escape = False
+        for ch in pattern:
+            if escape:
+                if ch.isalnum() or ch in "-_:/.":
+                    buf.append(ch)
+                else:
+                    if len(buf) >= 4:
+                        literals.append("".join(buf))
+                    buf = []
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch.isalnum() or ch in "-_:/.":
+                buf.append(ch)
+            else:
+                if len(buf) >= 4:
+                    literals.append("".join(buf))
+                buf = []
+        if len(buf) >= 4:
+            literals.append("".join(buf))
+        if not literals:
+            return None
+        literals.sort(key=len, reverse=True)
+        return literals[0]
+
+    def _iter_candidates(self, text: str):
+        yielded = set()
+        text_chars = set(text)
+        for ch in text_chars:
+            for literal, idx in self.literal_bins.get(ch, []):
+                if idx in yielded:
+                    continue
+                if literal in text:
+                    yielded.add(idx)
+                    yield self.items[idx]
+        for idx in self.fallback_indices:
+            if idx in yielded:
+                continue
+            yielded.add(idx)
+            yield self.items[idx]
+
+    def _match_one_uncached(self, text: str) -> Optional[int]:
+        for tid, _, creg in self._iter_candidates(text):
             if creg.search(text):
                 return tid
         return None
+
+    def match_one(self, text: str) -> Optional[int]:
+        return self._match_one_cached(text or "")
+
+    def clear_cache(self) -> None:
+        self._match_one_cached.cache_clear()
 
 
 _executor_cache: Dict[int, ThreadPoolExecutor] = {}
@@ -81,26 +164,39 @@ def _shutdown_executors() -> None:
 atexit.register(_shutdown_executors)
 
 
-def _build_match_result(index_handle: CompiledIndex, parsed_line: Any) -> MatchResult:
-    tid = index_handle.match_one(parsed_line.key_text)
-    if tid is None:
-        return MatchResult(False, None, None, None, parsed_line, parsed_line.key_text)
-    return MatchResult(True, tid, None, None, parsed_line, parsed_line.key_text)
-
-
 def match_batch(index_handle: CompiledIndex, parsed_batch: List[Any], workers: int = 4, nomal=True) -> List[MatchResult]:
     if not parsed_batch:
         return []
 
     workers = max(1, int(workers or 1))
+    key_to_idx: Dict[str, int] = {}
+    unique_key_texts: List[str] = []
+    for parsed in parsed_batch:
+        key = parsed.key_text or ""
+        if key not in key_to_idx:
+            key_to_idx[key] = len(unique_key_texts)
+            unique_key_texts.append(key)
 
-    # 小批次直接串行处理，避免线程调度开销
-    if workers == 1 or len(parsed_batch) <= workers * 4:
-        return [_build_match_result(index_handle, p) for p in parsed_batch]
+    def _match_keys(keys: List[str]) -> List[Optional[int]]:
+        if workers == 1 or len(keys) <= workers * 4:
+            return [index_handle.match_one(k) for k in keys]
+        executor = _get_executor(workers)
+        return list(executor.map(index_handle.match_one, keys))
 
-    executor = _get_executor(workers)
-    # executor.map 会保持输入顺序，省去额外排序
-    return list(executor.map(lambda p: _build_match_result(index_handle, p), parsed_batch))
+    key_results = _match_keys(unique_key_texts)
+    key_to_tid = {
+        key: key_results[idx] for key, idx in key_to_idx.items()
+    }
+
+    outs: List[MatchResult] = []
+    for parsed in parsed_batch:
+        key = parsed.key_text or ""
+        tid = key_to_tid.get(key)
+        if tid is None:
+            outs.append(MatchResult(False, None, None, None, parsed, key))
+        else:
+            outs.append(MatchResult(True, tid, None, None, parsed, key))
+    return outs
 
 # def match_batch_copy(index_handle: CompiledIndex, parsed_batch: List[Any], workers: int = 4, nomal=True) -> List[MatchResult]:
 #         """
